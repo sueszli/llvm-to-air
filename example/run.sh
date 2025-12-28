@@ -10,6 +10,7 @@ xcrun -sdk macosx metal -c shader.ll -o shader.air
 echo "compiling: AIR -> metallib"
 xcrun -sdk macosx metallib shader.air -o shader.metallib
 
+# objective-c++ isn't great but still easier to run than metal-cpp
 echo "running harness"
 clang++ -std=c++17 -framework Metal -framework Foundation harness.mm -o harness
 ./harness
