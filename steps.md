@@ -1,3 +1,5 @@
+> Study: https://github.com/a2flo/floor
+
 Your goal is to make LLVM bitcode that Apple's Metal driver will accept. The approach is simple: (1) reverse-engineer what the real compiler produces, (2) forge a minimal example by hand to prove you understand the format, (3) automate it.
 
 **What AIR actually is**
