@@ -1,7 +1,0 @@
-# LLVM to AIR Translation Layer
-
-This project implements a backend for translating device-agnostic LLVM IR into Apple Metal AIR bitcode. The standard Metal compilation pipeline transforms Metal Shading Language (MSL) source into AIR (an LLVM bitcode derivative) and subsequently into machine code. While tools exist to convert standard shaders to MSL, there is currently no direct lowering from MLIR to MSL. This project implements a direct LLVM to AIR bridge, utilizing reverse-engineered metadata specifications similar to the approach pioneered by the Mojo language team.
-
-Reference: https://forum.modular.com/t/apple-silicon-gpu-support-in-mojo/2295
-
-The `air_forge.py` utility normalizes generic LLVM IR to the AIR specification through a four-stage pipeline. (1) Target Reparameterization rewrites the target triple to `air64_v27-apple-macosx15.0.0` and enforces the specific data layout required by the Apple Silicon memory model. (2) Type and Address Space Lowering reconstructs explicit pointer types from opaque pointers and maps generic pointers to address space 1 for device memory or address space 3 for threadgroup memory. This pass implements recursive SSA-use-def chain traversal to propagate address spaces through instruction sequences. (3) Intrinsic Lowering maps generic synchronization primitives such as barrier calls to Metal-specific intrinsics. (4) Metadata Synthesis generates the required metadata trees, including kernel entry points, argument buffer bindings, and thread position annotations required by the Metal driver.
