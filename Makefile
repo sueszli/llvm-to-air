@@ -6,7 +6,7 @@ run:
 	xcrun -sdk macosx metallib src/test.air -o src/test.metallib
 	clang++ -std=c++17 -framework Metal -framework Foundation src/verify.mm -o src/verify
 	./src/verify
-	rm -rf src/test.ll src/test.air src/test.metallib src/verify
+	rm -rf src/input.ll src/test.ll src/test.air src/test.metallib src/verify
 
 .PHONY: venv
 venv:
