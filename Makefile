@@ -8,10 +8,6 @@ run:
 	./src/verify
 	rm -rf src/test.ll src/test.air src/test.metallib src/verify
 
-# 
-# utils
-# 
-
 .PHONY: venv
 venv:
 	test -f requirements.txt || (uvx pipreqs . --mode no-pin --encoding utf-8 --ignore .venv && mv requirements.txt requirements.in && uv pip compile requirements.in -o requirements.txt)
