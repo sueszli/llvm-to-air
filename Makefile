@@ -4,9 +4,8 @@ run:
 	uv run src/air_forge.py src/input.ll > src/test.ll
 	xcrun -sdk macosx metal -c src/test.ll -o src/test.air
 	xcrun -sdk macosx metallib src/test.air -o src/test.metallib
-	clang++ -std=c++17 -framework Metal -framework Foundation src/verify.mm -o src/verify
-	./src/verify
-	rm -rf src/input.ll src/test.ll src/test.air src/test.metallib src/verify
+	uv run src/verify.py
+	rm -rf src/input.ll src/test.ll src/test.air src/test.metallib
 
 .PHONY: venv
 venv:
@@ -17,9 +16,7 @@ venv:
 
 .PHONY: fmt
 fmt:
-# 	uvx --from cmakelang cmake-format --dangle-parens --line-width 500 -i CMakeLists.txt
 	find . -name "*.c" -o -name "*.h" | xargs clang-format -i
-
 	uvx isort .
 	uvx autoflake --remove-all-unused-imports --recursive --in-place .
 	uvx black --line-length 5000 .

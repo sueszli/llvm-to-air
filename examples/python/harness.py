@@ -7,8 +7,9 @@
 
 import ctypes
 import os
-import Metal
+
 import Foundation
+import Metal
 
 device = Metal.MTLCreateSystemDefaultDevice()
 assert device, "metal not supported on this device"
@@ -33,12 +34,8 @@ raw_data = (ctypes.c_float * item_count)(10.0, 20.0, 30.0, 40.0)
 size_bytes = ctypes.sizeof(raw_data)
 
 # create buffers
-buffer_a = device.newBufferWithBytes_length_options_(
-    raw_data, size_bytes, Metal.MTLResourceStorageModeShared
-)
-buffer_b = device.newBufferWithLength_options_(
-    size_bytes, Metal.MTLResourceStorageModeShared
-)
+buffer_a = device.newBufferWithBytes_length_options_(raw_data, size_bytes, Metal.MTLResourceStorageModeShared)
+buffer_b = device.newBufferWithLength_options_(size_bytes, Metal.MTLResourceStorageModeShared)
 assert buffer_a and buffer_b, "buffer creation failed"
 
 # encode commands
@@ -65,7 +62,7 @@ cmd_buffer.waitUntilCompleted()
 # verify
 raw_ptr = buffer_b.contents()
 output_view = raw_ptr.as_buffer(size_bytes)
-results = memoryview(output_view).cast('f')
+results = memoryview(output_view).cast("f")
 
 print("results:")
 for i in range(item_count):

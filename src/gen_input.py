@@ -5,8 +5,8 @@
 # ///
 
 from xdsl.dialects import arith, llvm
-from xdsl.dialects.builtin import ModuleOp, StringAttr, SymbolRefAttr, i32, i64, f32, IntegerAttr
-from xdsl.ir import Block, Region, SSAValue, Attribute
+from xdsl.dialects.builtin import IntegerAttr, ModuleOp, SymbolRefAttr, f32, i32, i64
+from xdsl.ir import Block, Region, SSAValue
 
 
 class LLVMIRPrinter:
@@ -30,11 +30,11 @@ class LLVMIRPrinter:
         self.output_lines.append('target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"')
         self.output_lines.append('target triple = "x86_64-unknown-linux-gnu"')
         self.output_lines.append("")
-        
+
         # Print declarations first
         for op in module.body.blocks[0].ops:
-            if isinstance(op, llvm.FuncOp) and len(op.body.blocks) == 0: # Declaration
-                 self.print_func_decl(op)
+            if isinstance(op, llvm.FuncOp) and len(op.body.blocks) == 0:  # Declaration
+                self.print_func_decl(op)
 
         self.output_lines.append("")
 
@@ -51,22 +51,22 @@ class LLVMIRPrinter:
     def print_func(self, func: llvm.FuncOp):
         func_name = func.sym_name.data
         func_args = func.body.blocks[0].args
-        
+
         arg_names = ["in", "out", "id", "tid", "shared_data"]
         arg_strs = []
-        
+
         for idx, arg in enumerate(func_args):
             name = arg_names[idx]
             self.value_map[arg] = f"%{name}"
-            
+
             # Determine type string
             if isinstance(arg.type, llvm.LLVMPointerType):
-                 type_str = "float*" # specialized for this input
+                type_str = "float*"  # specialized for this input
             elif arg.type == i32:
-                 type_str = "i32"
+                type_str = "i32"
             else:
-                 type_str = "unknown"
-            
+                type_str = "unknown"
+
             arg_strs.append(f"{type_str} %{name}")
 
         self.next_value_id = 1
@@ -75,33 +75,33 @@ class LLVMIRPrinter:
         # Process blocks
         ops = func.body.blocks[0].ops
         gep_count = 0
-        
+
         for op in ops:
             # Comments and spacing logic
-            
+
             if isinstance(op, llvm.ZExtOp):
-                 if self.next_value_id == 1:
-                      self.output_lines.append("  ; 1. Load from global to shared")
-                 elif self.value_map.get(op.arg) == "%tid":
-                      self.output_lines.append("  ") # Line 12: 2 spaces
+                if self.next_value_id == 1:
+                    self.output_lines.append("  ; 1. Load from global to shared")
+                elif self.value_map.get(op.arg) == "%tid":
+                    self.output_lines.append("  ")  # Line 12: 2 spaces
 
             # 2. Sync
             if isinstance(op, llvm.CallOp):
-                 self.output_lines.append("") # Line 16: 0 spaces
-                 self.output_lines.append("  ; 2. Sync")
+                self.output_lines.append("")  # Line 16: 0 spaces
+                self.output_lines.append("  ; 2. Sync")
 
             # 3. Read NEIGHBOR's data
             if isinstance(op, llvm.XOrOp):
-                 self.output_lines.append("") # Line 19: 0 spaces
-                 self.output_lines.append("  ; 3. Read NEIGHBOR's data (tid ^ 1)")
+                self.output_lines.append("")  # Line 19: 0 spaces
+                self.output_lines.append("  ; 3. Read NEIGHBOR's data (tid ^ 1)")
 
             # 4. Write to output
             # Happens before the 4th GEP.
             if isinstance(op, llvm.GEPOp):
-                 gep_count += 1
-                 if gep_count == 4:
-                      self.output_lines.append("  ") # Line 25: 2 spaces
-                      self.output_lines.append("  ; 4. Write to output")
+                gep_count += 1
+                if gep_count == 4:
+                    self.output_lines.append("  ")  # Line 25: 2 spaces
+                    self.output_lines.append("  ; 4. Write to output")
 
             self.print_op(op)
 
@@ -126,7 +126,7 @@ class LLVMIRPrinter:
             ptr = self.get_value_name(op.ptr)
             idx_val = op.ssa_indices[0]
             idx_name = self.get_value_name(idx_val)
-            
+
             self.output_lines.append(f"  {res} = getelementptr inbounds float, float* {ptr}, i64 {idx_name}")
 
         elif isinstance(op, llvm.LoadOp):
@@ -143,29 +143,29 @@ class LLVMIRPrinter:
 
         elif isinstance(op, llvm.CallOp):
             callee = op.callee
-            if isinstance(callee, SymbolRefAttr): # direct call
-                 func_name = callee.root_reference.data
-                 self.output_lines.append(f"  call void @{func_name}()")
+            if isinstance(callee, SymbolRefAttr):  # direct call
+                func_name = callee.root_reference.data
+                self.output_lines.append(f"  call void @{func_name}()")
 
         elif isinstance(op, llvm.XOrOp):
             res = self.get_value_name(op.results[0])
             lhs = self.get_value_name(op.lhs)
-            
+
             rhs_op = op.rhs.owner
             if isinstance(rhs_op, arith.ConstantOp):
-                 val = rhs_op.value
-                 if isinstance(val, IntegerAttr):
-                      rhs_str = str(val.value.data)
-                 else:
-                      rhs_str = "1" # fallback
+                val = rhs_op.value
+                if isinstance(val, IntegerAttr):
+                    rhs_str = str(val.value.data)
+                else:
+                    rhs_str = "1"  # fallback
             else:
-                 rhs_str = self.get_value_name(op.rhs)
+                rhs_str = self.get_value_name(op.rhs)
 
             self.output_lines.append(f"  {res} = xor i32 {lhs}, {rhs_str}")
-        
+
         elif isinstance(op, llvm.ReturnOp):
             self.output_lines.append("  ret void")
-        
+
         elif isinstance(op, arith.ConstantOp):
             pass
 
@@ -193,62 +193,62 @@ def create_xdsl_module():
     arg_in, arg_out, arg_id, arg_tid, arg_shared = args
 
     # Body
-    
+
     # %1 = zext i32 %id to i64
     zext1 = llvm.ZExtOp(arg_id, i64)
     entry_block.add_op(zext1)
-    
+
     # %2 = getelementptr inbounds float, float* %in, i64 %1
     gep1 = llvm.GEPOp(arg_in, [], f32, ssa_indices=[zext1.results[0]], inbounds=True)
     entry_block.add_op(gep1)
-    
+
     # %3 = load float, float* %2, align 4
     load1 = llvm.LoadOp(gep1.results[0], f32, alignment=4)
     entry_block.add_op(load1)
-    
+
     # %4 = zext i32 %tid to i64
     zext2 = llvm.ZExtOp(arg_tid, i64)
     entry_block.add_op(zext2)
-    
+
     # %5 = getelementptr inbounds float, float* %shared_data, i64 %4
     gep2 = llvm.GEPOp(arg_shared, [], f32, ssa_indices=[zext2.results[0]], inbounds=True)
     entry_block.add_op(gep2)
-    
+
     # store float %3, float* %5, align 4
     store1 = llvm.StoreOp(load1.results[0], gep2.results[0], alignment=4)
     entry_block.add_op(store1)
-    
+
     # call void @barrier()
     call1 = llvm.CallOp(SymbolRefAttr("barrier"), return_type=void_type)
     entry_block.add_op(call1)
-    
+
     # %6 = xor i32 %tid, 1
     const_1 = arith.ConstantOp(IntegerAttr(1, 32))
-    entry_block.add_op(const_1) 
-    
+    entry_block.add_op(const_1)
+
     xor1 = llvm.XOrOp(arg_tid, const_1.results[0])
     entry_block.add_op(xor1)
-    
+
     # %7 = zext i32 %6 to i64
     zext3 = llvm.ZExtOp(xor1.results[0], i64)
     entry_block.add_op(zext3)
-    
+
     # %8 = getelementptr inbounds float, float* %shared_data, i64 %7
     gep3 = llvm.GEPOp(arg_shared, [], f32, ssa_indices=[zext3.results[0]], inbounds=True)
     entry_block.add_op(gep3)
-    
+
     # %9 = load float, float* %8, align 4
     load2 = llvm.LoadOp(gep3.results[0], f32, alignment=4)
     entry_block.add_op(load2)
-    
+
     # %10 = getelementptr inbounds float, float* %out, i64 %1
     gep4 = llvm.GEPOp(arg_out, [], f32, ssa_indices=[zext1.results[0]], inbounds=True)
     entry_block.add_op(gep4)
-    
+
     # store float %9, float* %10, align 4
     store2 = llvm.StoreOp(load2.results[0], gep4.results[0], alignment=4)
     entry_block.add_op(store2)
-    
+
     # ret void
     ret = llvm.ReturnOp.create()
     entry_block.add_op(ret)
