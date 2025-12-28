@@ -13,7 +13,7 @@ import re
 
 from xdsl.builder import Builder, InsertPoint
 from xdsl.dialects import llvm, builtin, arith
-from xdsl.dialects.builtin import ModuleOp, StringAttr, IntegerAttr, i32, f32
+from xdsl.dialects.builtin import ModuleOp, StringAttr, IntegerAttr, FloatAttr, i32, f32
 from xdsl.ir import Block, Region, SSAValue
 
 # Import AIRForge from local file
@@ -62,22 +62,26 @@ class LLVMIRPrinter:
         return "\n".join(self.output)
 
     def print_func(self, func: llvm.FuncOp):
-        # define void @test_kernel(float* %0, float* %1, i32 %2)
+        # define void @test_kernel(float* %in, float* %out, i32 %id)
         name = func.sym_name.data
         
         args = []
         for i, arg in enumerate(func.body.blocks[0].args):
-            # Map argument values
-            # We assume types based on order for this specific demo kernel to match air_forge expectations:
-            # float* %var
-            # xDSL args typed?
-            arg_name = self.get_value_name(arg)
+            # Give arguments meaningful names instead of numbers
+            arg_names = ["in", "out", "id"]
+            arg_name = arg_names[i] if i < len(arg_names) else f"arg{i}"
+            # Map argument values with names
+            self.value_map[arg] = f"%{arg_name}"
+            
             # Hacky type inference for printer based on what we know we built
             if i < 2:
                 type_str = "float*"
             else:
                 type_str = "i32"
-            args.append(f"{type_str} {arg_name}")
+            args.append(f"{type_str} %{arg_name}")
+        
+        # Reset counter for body instructions to start at %1
+        self.name_counter = 1
             
         arg_str = ", ".join(args)
         self.output.append(f"define void @{name}({arg_str}) {{")
@@ -89,19 +93,18 @@ class LLVMIRPrinter:
         self.output.append("}")
 
     def print_op(self, op):
-        if isinstance(op, llvm.GetElementPtrOp):
+        if isinstance(op, llvm.GEPOp):
             # %val = getelementptr float, float* %ptr, i32 %idx
             res = self.get_value_name(op.results[0])
             ptr = self.get_value_name(op.ptr)
-            # Indices: xdsl GEP stores indices as operands or attributes depending on static/dynamic
-            # For this demo we use dynamic SSA operands
-            idx = self.get_value_name(op.indices[0]) 
+            # ssa_indices contains dynamic SSA operands
+            idx = self.get_value_name(op.ssa_indices[0]) 
             self.output.append(f"  {res} = getelementptr float, float* {ptr}, i32 {idx}")
             
         elif isinstance(op, llvm.LoadOp):
             # %val = load float, float* %ptr
-            res = self.get_value_name(op.res)
-            ptr = self.get_value_name(op.op_ptr) # Make sure attribute name is correct
+            res = self.get_value_name(op.dereferenced_value)
+            ptr = self.get_value_name(op.ptr)
             self.output.append(f"  {res} = load float, float* {ptr}")
             
         elif isinstance(op, llvm.FMulOp):
@@ -114,24 +117,17 @@ class LLVMIRPrinter:
         elif isinstance(op, llvm.StoreOp):
             # store float %val, float* %ptr
             val = self.get_value_name(op.value)
-            ptr = self.get_value_name(op.op_ptr) # Attribute name?
+            ptr = self.get_value_name(op.ptr)
             self.output.append(f"  store float {val}, float* {ptr}")
             
         elif isinstance(op, llvm.ReturnOp):
             self.output.append("  ret void")
             
         elif isinstance(op, arith.ConstantOp):
-            # %val = CONST
-            # We treat constants as inlined usually in LLVM but xDSL has them as SSA.
-            # We won't strictly print a constant instruction if we can inline, but let's just print a pseudo op or inline it?
-            # LLVM IR usually allows constants directly in operands.
-            # But converting SSA constant to immediate requires tracking.
-            # For this simplified printer, let's just map it to a value?
-            # No, LLVM IR doesn't have "constant" op like MLIR.
-            # We should map the SSA value 'op.results[0]' to the literal string.
+            # Map constant SSA value to literal for inlining
             val = op.value
             if isinstance(val, FloatAttr):
-                self.value_map[op.results[0]] = f"{val.value.data:e}" # scientific notation
+                self.value_map[op.results[0]] = f"{val.value.data:e}"
             elif isinstance(val, IntegerAttr):
                 self.value_map[op.results[0]] = str(val.value.data)
 
@@ -141,7 +137,9 @@ def create_xdsl_module():
     
     # Function Signature
     # void test_kernel(float* %in, float* %out, i32 %id)
-    args_types = [llvm.LLVMPointerType.typed(f32), llvm.LLVMPointerType.typed(f32), i32]
+    # xDSL LLVMPointerType is opaque by default now
+    ptr_type = llvm.LLVMPointerType()
+    args_types = [ptr_type, ptr_type, i32]
     func_type = llvm.LLVMFunctionType(args_types, llvm.LLVMVoidType())
     
     func = llvm.FuncOp("test_kernel", func_type, linkage=llvm.LinkageAttr("external"))
@@ -152,11 +150,13 @@ def create_xdsl_module():
     # Instructions
     # GEP In
     ptr_in, ptr_out, idx = block.args
-    gep_in = llvm.GetElementPtrOp(ptr_in, [idx], elem_type=f32)
+    # GEPOp(ptr, indices=[], pointee_type, ssa_indices=[dynamic_indices])
+    gep_in = llvm.GEPOp(ptr_in, [], f32, ssa_indices=[idx])
     block.add_op(gep_in)
     
     # Load In
-    val_in = llvm.LoadOp(gep_in.results[0], f32) # Assuming API: op_ptr, type
+    # llvm.LoadOp(ptr, type) -> result
+    val_in = llvm.LoadOp(gep_in.results[0], f32) 
     block.add_op(val_in)
     
     # Const 2.0
@@ -168,15 +168,16 @@ def create_xdsl_module():
     block.add_op(mul)
     
     # GEP Out
-    gep_out = llvm.GetElementPtrOp(ptr_out, [idx], elem_type=f32)
+    gep_out = llvm.GEPOp(ptr_out, [], f32, ssa_indices=[idx])
     block.add_op(gep_out)
     
     # Store
+    # llvm.StoreOp(val, ptr)
     store = llvm.StoreOp(mul.results[0], gep_out.results[0])
     block.add_op(store)
     
     # Ret
-    ret = llvm.ReturnOp([])
+    ret = llvm.ReturnOp.create()
     block.add_op(ret)
     
     module.body.blocks[0].add_op(func)
@@ -290,6 +291,9 @@ def main():
     forge = AIRForge()
     # Update Triple
     forge.triple = f"air64_v27-apple-{target_os}"
+    # Setup metadata properly
+    forge.metadata_id_counter = 30
+    forge.add_static_metadata()
     air_ll = forge.process(llvm_ir)
     
     with open("demo_forged.ll", "w") as f:
@@ -313,6 +317,12 @@ def main():
     
     print("Executing runner...")
     output = run_command("./runner", shell=False)
+    # delete runner
+    run_command("rm runner")
+    run_command("rm runner.mm")
+    run_command("rm demo.air")
+    run_command("rm demo.metallib")
+    run_command("rm demo_forged.ll")
     print(output)
 
 if __name__ == "__main__":
