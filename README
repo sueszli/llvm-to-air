@@ -1,10 +1,7 @@
 TODO:
 
-- minimize the gen_llvm stuff to bare minimum
-- improve the llvm_to_air.py
-- write a bunch of different test cases for llvm_to_air.py (hand written ll files)
-- design language on top of xdsl
-
+- rewrite the thing in llvmlite instead of xdsl
+- try to pack everything into a single python script
 
 
 
