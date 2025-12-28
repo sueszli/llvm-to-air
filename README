@@ -1,18 +1,16 @@
 
+references:
 
+- https://developer.apple.com/documentation/metal/performing-calculations-on-a-gpu
+- https://developer.apple.com/documentation/metal/building-a-shader-library-by-precompiling-source-files
 
-msl compiler installation:
+# Examples
 
-```
-# install toolchain
-xcode-select --install
-xcodebuild -downloadComponent MetalToolchain
+## Example 1: metal -> air
 
-# mls -> ll
-xcrun -sdk macosx metal -S -emit-llvm shader.metal -o reference.ll
-xcrun -sdk macosx metal shader.metal -o shader.metallib
+Direct compilation using `metal -c`.
 
-# metal -> air
+```bash
 cd example-1
 xcrun -sdk macosx metal -c shader.metal -o shader.air
 xcrun -sdk macosx metallib shader.air -o shader.metallib
@@ -20,16 +18,14 @@ clang++ -std=c++17 -framework Metal -framework Foundation harness.mm -o harness
 ./harness
 rm harness shader.air shader.metallib
 cd ..
-
-
-
-
-
-xcrun -sdk macosx metal -o shader.ir -c shader.metal
-xcrun -sdk macosx metal shader.ir
 ```
 
-references:
+## Example 2: metal -> ll -> air
 
-- https://developer.apple.com/documentation/metal/performing-calculations-on-a-gpu
-- https://developer.apple.com/documentation/metal/building-a-shader-library-by-precompiling-source-files
+Compilation via LLVM IR. Note that we use the `metal` driver to compile `.ll` to `.air`.
+
+```bash
+cd example-2
+./run.sh
+cd ..
+```
