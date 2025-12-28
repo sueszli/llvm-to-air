@@ -1,7 +1,7 @@
 .PHONY: run
 run:
-	uv run src/gen_input.py > src/input.ll
-	uv run src/air_forge.py src/input.ll > src/test.ll
+	uv run src/gen_llvm.py > src/input.ll
+	uv run src/llvm_to_air.py src/input.ll > src/test.ll
 	xcrun -sdk macosx metal -c src/test.ll -o src/test.air
 	xcrun -sdk macosx metallib src/test.air -o src/test.metallib
 	uv run src/verify.py
