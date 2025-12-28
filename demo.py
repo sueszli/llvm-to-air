@@ -13,12 +13,7 @@ from xdsl.dialects import arith, llvm
 from xdsl.dialects.builtin import FloatAttr, IntegerAttr, ModuleOp, f32, i32
 from xdsl.ir import Block, Region, SSAValue
 
-# Import AIRForge from local file
-try:
-    from air_forge import AIRForge
-except ImportError:
-    print("Error: air_forge.py not found in current directory.")
-    sys.exit(1)
+from air_forge import AIRForge
 
 
 def assert_system_requirements():
