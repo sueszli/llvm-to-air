@@ -1,12 +1,12 @@
 .PHONY: run
 run:
-	@uv run src/gen_input.py > src/input.ll
-	@uv run src/air_forge.py src/input.ll > src/test.ll
-	@xcrun -sdk macosx metal -c src/test.ll -o src/test.air
-	@xcrun -sdk macosx metallib src/test.air -o src/test.metallib
-	@clang++ -std=c++17 -framework Metal -framework Foundation src/verify.mm -o src/verify
-	@./src/verify
-	@rm -rf src/test.ll src/test.air src/test.metallib src/verify
+	uv run src/gen_input.py > src/input.ll
+	uv run src/air_forge.py src/input.ll > src/test.ll
+	xcrun -sdk macosx metal -c src/test.ll -o src/test.air
+	xcrun -sdk macosx metallib src/test.air -o src/test.metallib
+	clang++ -std=c++17 -framework Metal -framework Foundation src/verify.mm -o src/verify
+	./src/verify
+	rm -rf src/test.ll src/test.air src/test.metallib src/verify
 
 # 
 # utils
