@@ -10,10 +10,16 @@ xcodebuild -downloadComponent MetalToolchain
 
 # mls -> ll
 xcrun -sdk macosx metal -S -emit-llvm shader.metal -o reference.ll
-
-# ll -> metallib
 xcrun -sdk macosx metal shader.metal -o shader.metallib
 
+# metal -> air
+cd example-1
+xcrun -sdk macosx metal -c shader.metal -o shader.air
+xcrun -sdk macosx metallib shader.air -o shader.metallib
+clang++ -std=c++17 -framework Metal -framework Foundation harness.mm -o harness
+./harness
+rm harness shader.air shader.metallib
+cd ..
 
 
 
