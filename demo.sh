@@ -1,8 +1,7 @@
 #!/bin/bash
 set -e
 
-# uv run demo.py > input.ll  ----> somehow breaks assert statement
-cat custom.ll > input.ll
+# uv run gen_input.py > input.ll  ----> somehow breaks assert statement
 
 python3 air_forge.py input.ll > test.ll
 
@@ -13,4 +12,4 @@ xcrun -sdk macosx metallib test.air -o test.metallib
 clang++ -std=c++17 -framework Metal -framework Foundation verify.mm -o verify
 
 ./verify
-rm -rf input.ll test.ll test.air test.metallib verify
+rm -rf test.ll test.air test.metallib verify
