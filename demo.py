@@ -26,7 +26,6 @@ def assert_system_requirements():
     # extract major version for target triple (e.g., "15" from "15.2.1")
     macos_version_str = platform.mac_ver()[0]
     major_version_str = macos_version_str.split(".")[0]
-
     return f"macosx{major_version_str}.0.0"
 
 
