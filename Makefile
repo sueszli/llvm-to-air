@@ -5,7 +5,7 @@ run:
 	xcrun -sdk macosx metal -c src/test.ll -o src/test.air
 	xcrun -sdk macosx metallib src/test.air -o src/test.metallib
 	uv run src/verify.py
-	rm -rf src/input.ll src/test.ll src/test.air src/test.metallib
+	@rm -rf src/input.ll src/test.ll src/test.air src/test.metallib
 
 .PHONY: venv
 venv:
