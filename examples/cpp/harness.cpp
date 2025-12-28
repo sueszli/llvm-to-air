@@ -26,26 +26,16 @@ int main() {
 
     NS::String* libPath = NS::String::string("shader.metallib", NS::UTF8StringEncoding);
     MTL::Library* library = device->newLibrary(libPath, &error);
-    
-    if (!library) {
-        std::cerr << "ERROR: failed to load library 'shader.metallib': " << error->localizedDescription()->utf8String() << std::endl;
-        return 1;
-    }
+    assert(library && "failed to load library 'shader.metallib'");
 
     // get the kernel function "add"
     NS::String* fnName = NS::String::string("add", NS::UTF8StringEncoding);
     MTL::Function* addFn = library->newFunction(fnName);
-    if (!addFn) {
-        std::cerr << "ERROR: failed to find function 'add' in library." << std::endl;
-        return 1;
-    }
+    assert(addFn && "failed to find function 'add'");
 
     // create compute pipeline state
     MTL::ComputePipelineState* pso = device->newComputePipelineState(addFn, &error);
-    if (!pso) {
-        std::cerr << "ERROR: failed to create pipeline state: " << error->localizedDescription()->utf8String() << std::endl;
-        return 1;
-    }
+    assert(pso && "failed to create pipeline state");
 
     const int count = 4;
     float rawData[count] = {10.0f, 20.0f, 30.0f, 40.0f};
@@ -96,11 +86,7 @@ int main() {
 
     pool->release();
 
-    if (success) {
-        std::cout << "SUCCESS: kernel execution verified." << std::endl;
-        return 0;
-    } else {
-        std::cerr << "FAILURE: results did not match." << std::endl;
-        return 1;
-    }
+    assert(success && "results did not match");
+    std::cout << "SUCCESS: kernel execution verified." << std::endl;
+    return 0;
 }

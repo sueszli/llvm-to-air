@@ -1,3 +1,4 @@
+#include <cassert>
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -7,10 +8,7 @@
 int main() {
     @autoreleasepool {
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-        if (!device) {
-            std::cerr << "error: metal is not supported on this device." << std::endl;
-            return 1;
-        }
+        assert(device && "metal is not supported on this device");
         std::cout << "device: " << [device.name UTF8String] << std::endl;
 
         NSError* error = nil;
@@ -19,25 +17,15 @@ int main() {
         
         NSURL* libURL = [NSURL fileURLWithPath:libPath];
         id<MTLLibrary> library = [device newLibraryWithURL:libURL error:&error];
-        
-        if (!library) {
-            std::cerr << "failed to load library '" << [libPath UTF8String] << "': " << [[error localizedDescription] UTF8String] << std::endl;
-            return 1;
-        }
+        assert(library && "failed to load library 'shader.metallib'");
 
         // get the kernel function "add"
         id<MTLFunction> addFn = [library newFunctionWithName:@"add"];
-        if (!addFn) {
-            std::cerr << "failed to find function 'add' in library." << std::endl;
-            return 1;
-        }
+        assert(addFn && "failed to find function 'add'");
 
         // create compute pipeline state
         id<MTLComputePipelineState> pso = [device newComputePipelineStateWithFunction:addFn error:&error];
-        if (!pso) {
-            std::cerr << "failed to create pipeline state: " << [[error localizedDescription] UTF8String] << std::endl;
-            return 1;
-        }
+        assert(pso && "failed to create pipeline state");
 
         const int count = 4;
         // input: {10, 20, 30, 40}
@@ -86,12 +74,8 @@ int main() {
             std::cout << std::endl;
         }
         
-        if (success) {
-            std::cout << "SUCCESS: kernel execution verified." << std::endl;
-        } else {
-            std::cerr << "FAILURE: results did not match." << std::endl;
-            return 1;
-        }
+        assert(success && "results did not match");
+        std::cout << "SUCCESS: kernel execution verified." << std::endl;
     }
     return 0;
 }
