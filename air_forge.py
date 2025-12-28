@@ -9,6 +9,8 @@ class AIRForge:
         self.metadata_id_counter = 0
         self.metadata = []
         self.kernel_metadata_nodes = []
+        self.shared_vars = set()
+        self.has_barrier = False
 
     def get_next_metadata_id(self):
         id = self.metadata_id_counter
@@ -59,11 +61,48 @@ class AIRForge:
                 output_lines.append(line)
                 continue
 
-            # Naive body transformation: float* -> float addrspace(1)*
-            # In a real compiler, we would parse instructions.
-            # strict replacement to avoid breaking other things
-            new_line = line.replace('float*', 'float addrspace(1)*')
-            output_lines.append(new_line)
+            # Body transformation
+            # We need to track variables that hold addrspace(3) pointers
+            # self.shared_vars was populated during signature parsing
+            
+            # Identify return value definition: "%2 = ..."
+            ret_var = None
+            match_assign = re.match(r'^\s*(%[\w\.\d]+)\s*=', line)
+            if match_assign:
+                ret_var = match_assign.group(1)
+
+            # Check if any operand is a known shared variable
+            # Regex to find %name
+            operands = re.findall(r'%[\w\.\d]+', line)
+            # Filter distinct operands, exclude the one being defined
+            input_ops = [op for op in operands if op != ret_var]
+            
+            uses_shared = any(op in self.shared_vars for op in input_ops)
+            
+            current_line = line
+            
+            if uses_shared:
+                # If this instruction uses a shared var, its pointer operands likely usually need to be addrspace(3)
+                # Naive replacement: float* -> float addrspace(3)*
+                # This works for load, store, gep where the pointer is shared.
+                # It might break if mixing pointers, but for this kernel it's fine.
+                current_line = current_line.replace('float*', 'float addrspace(3)*')
+                
+                # If this instruction produces a pointer (like GEP), mark result as shared
+                if ret_var and ('getelementptr' in line or 'bitcast' in line):
+                     self.shared_vars.add(ret_var)
+            else:
+                # Default behavior: float* -> float addrspace(1)*
+                current_line = current_line.replace('float*', 'float addrspace(1)*')
+
+            # Intrinsic Lowering: Barrier
+            if "@barrier" in current_line and "call void" in current_line:
+                 # Replace with AIR intrinsic
+                 # tail call void @air.wg.barrier(i32 2, i32 1) #2
+                 current_line = '  tail call void @air.wg.barrier(i32 2, i32 1) #2'
+                 self.has_barrier = True
+            
+            output_lines.append(current_line)
 
         # 2. Append Metadata
         output_lines.append('')
@@ -83,6 +122,12 @@ class AIRForge:
         # Append generated metadata
         for meta_line in self.metadata:
             output_lines.append(meta_line)
+
+        if self.has_barrier:
+             output_lines.append('')
+             output_lines.append('declare void @air.wg.barrier(i32, i32) local_unnamed_addr #1')
+             output_lines.append('attributes #1 = { convergent mustprogress nounwind willreturn }')
+             output_lines.append('attributes #2 = { convergent nounwind willreturn }')
 
         # Append static metadata (IDs 15-30 for now to match my assumption, 
         # but really I should just offset my counter or append these to the list)
@@ -109,29 +154,53 @@ class AIRForge:
             
             # Logic to determine type
             if "float*" in type_str:
-                # Buffer
-                new_type = "float addrspace(1)* nocapture noundef"
-                if buffer_index == 0:
-                     new_type += ' readonly "air-buffer-no-alias"'
-                else: 
-                     new_type += ' writeonly "air-buffer-no-alias"'
+                is_shared = name.startswith("%shared_") or name.startswith("shared_")
                 
-                new_args.append(f"{new_type} {name}")
-                
-                # Metadata for buffer
-                # node format: !{i32 index, !"air.buffer", ...}
-                # We need to construct this.
-                # using helper to get ID
-                meta_content = f'!{{i32 {i}, !"air.buffer", !"air.location_index", i32 {buffer_index}, i32 1, !"air.read_write", !"air.address_space", i32 1, !"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"float", !"air.arg_name", !"{name.replace("%","")}"}}'
-                ref = self.add_metadata(meta_content)
-                metadata_node_refs.append(ref)
-                
-                buffer_index += 1
+                if is_shared:
+                    # Threadgroup memory
+                    new_type = "float addrspace(3)* nocapture noundef"
+                    new_type += ' "air-buffer-no-alias"'
+                    
+                    new_args.append(f"{new_type} {name}")
+                    self.shared_vars.add(name) # Track argument name
+                    
+                    # Metadata for threadgroup buffer
+                    # Using location_index 0 for first shared mem, need to track separate index?
+                    # For simplicty, let's assume one shared mem arg for now, or track separately.
+                    threadgroup_index = 0 # TODO: increment if multiple
+                    
+                    meta_content = f'!{{i32 {i}, !"air.buffer", !"air.location_index", i32 {threadgroup_index}, i32 1, !"air.read_write", !"air.address_space", i32 3, !"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"float", !"air.arg_name", !"{name.replace("%","")}"}}'
+                    ref = self.add_metadata(meta_content)
+                    metadata_node_refs.append(ref)
+                    
+                else:
+                    # Device buffer
+                    new_type = "float addrspace(1)* nocapture noundef"
+                    if buffer_index == 0:
+                         new_type += ' readonly "air-buffer-no-alias"'
+                    else: 
+                         new_type += ' writeonly "air-buffer-no-alias"'
+                    
+                    new_args.append(f"{new_type} {name}")
+                    
+                    meta_content = f'!{{i32 {i}, !"air.buffer", !"air.location_index", i32 {buffer_index}, i32 1, !"air.read_write", !"air.address_space", i32 1, !"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"float", !"air.arg_name", !"{name.replace("%","")}"}}'
+                    ref = self.add_metadata(meta_content)
+                    metadata_node_refs.append(ref)
+                    
+                    buffer_index += 1
                 
             elif "i32" in type_str:
                 # Thread ID
                 new_args.append(f"i32 noundef {name}")
-                meta_content = f'!{{i32 {i}, !"air.thread_position_in_grid", !"air.arg_type_name", !"uint", !"air.arg_name", !"{name.replace("%","")}"}}'
+                # Naive: map 'id' to global id (2), 'tid' to threadgroup id (?), let's support basic ones
+                # !14 = !{i32 2, !"air.thread_position_in_grid", ...}
+                # !15 = !{i32 3, !"air.thread_position_in_threadgroup", ...}
+                
+                type_name = "air.thread_position_in_grid"
+                if "tid" in name:
+                    type_name = "air.thread_position_in_threadgroup"
+                
+                meta_content = f'!{{i32 {i}, !"{type_name}", !"air.arg_type_name", !"uint", !"air.arg_name", !"{name.replace("%","")}"}}'
                 ref = self.add_metadata(meta_content)
                 metadata_node_refs.append(ref)
         
@@ -142,23 +211,14 @@ class AIRForge:
         arg_list_ref = self.add_metadata(f'!{{{", ".join(metadata_node_refs)}}}')
         empty_node_ref = self.add_metadata('!{}') # !10
         
-        # The main kernel node needs the function signature again? 
-        # !9 = !{void (float addrspace(1)*, ...)* @add, ...}
-        # Constructing the full function pointer type string is tedious.
-        # But wait, the AIR format uses the *redefined* types in the metadata pointer?
-        # Yes: !9 = !{void (float addrspace(1)*, float addrspace(1)*, i32)* @add, !10, !11}
-        
         # Reconstruct signature for metadata
-        # We need the simplified type list
         meta_sig_args = []
         for arg in new_args:
-             # extract type: everything before %name
-             # e.g. "float addrspace(1)* nocapture ... %a"
-             # actually metadata signature uses simplified types: "float addrspace(1)*"
-             # verify against shader.ll: "void (float addrspace(1)*, float addrspace(1)*, i32)*"
-             # attributes like nocapture are NOT in the metadata type signature.
-             
-             base_type = "float addrspace(1)*" if "float addrspace(1)*" in arg else "i32"
+             base_type = "i32"
+             if "addrspace(1)" in arg:
+                 base_type = "float addrspace(1)*"
+             elif "addrspace(3)" in arg:
+                 base_type = "float addrspace(3)*"
              meta_sig_args.append(base_type)
         
         meta_sig = f"void ({', '.join(meta_sig_args)})*"
