@@ -6,7 +6,7 @@
 # ///
 
 import ctypes
-import os
+from pathlib import Path
 
 import Foundation
 import Metal
@@ -15,9 +15,8 @@ if __name__ == "__main__":
     device = Metal.MTLCreateSystemDefaultDevice()
     assert device, "metal is not supported on this device."
 
-    cwd = os.getcwd()
-    lib_path = os.path.join(cwd, "src/test.metallib")
-    lib_url = Foundation.NSURL.fileURLWithPath_(lib_path)
+    lib_path = Path.cwd() / "src" / "test.metallib"
+    lib_url = Foundation.NSURL.fileURLWithPath_(str(lib_path))
 
     library, error = device.newLibraryWithURL_error_(lib_url, None)
     assert library, f"failed to load library '{lib_path}': {error}"
@@ -34,7 +33,6 @@ if __name__ == "__main__":
 
     buffer_a = device.newBufferWithBytes_length_options_(raw_data, data_size, Metal.MTLResourceStorageModeShared)
     buffer_b = device.newBufferWithLength_options_(data_size, Metal.MTLResourceStorageModeShared)
-
     assert buffer_a, "failed to create buffer_a"
     assert buffer_b, "failed to create buffer_b"
 
