@@ -1,256 +1,255 @@
-import sys
 import re
+import sys
+
 
 class AIRForge:
     def __init__(self):
-        # Ground truth constants
+        # apple silicon metal air target configuration
         self.triple = "air64_v27-apple-macosx15.0.0"
         self.datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"
-        self.metadata_id_counter = 0
-        self.metadata = []
-        self.kernel_metadata_nodes = []
-        self.shared_vars = set()
-        self.has_barrier = False
 
-    def get_next_metadata_id(self):
-        id = self.metadata_id_counter
-        self.metadata_id_counter += 1
-        return id
+        self.metadata_id_count = 0
+        self.metadata_lines = []
+        self.kernel_metadata_refs = []
+        self.shared_var_names = set()
+        self.has_barrier_intrinsic = False
 
-    def add_metadata(self, content):
-        id = self.get_next_metadata_id()
-        self.metadata.append(f'!{id} = {content}')
-        return f'!{id}'
+    def _allocate_metadata_id(self):
+        """returns next available metadata node id"""
+        current_id = self.metadata_id_count
+        self.metadata_id_count += 1
+        return current_id
+
+    def _emit_metadata(self, content):
+        """creates metadata node and returns its reference"""
+        node_id = self._allocate_metadata_id()
+        self.metadata_lines.append(f"!{node_id} = {content}")
+        return f"!{node_id}"
 
     def process(self, input_content):
-        lines = input_content.splitlines()
+        """transforms generic llvm ir to metal air format"""
+        input_lines = input_content.splitlines()
+        output_lines = self._emit_header()
+
+        # reserve metadata ids for static nodes to avoid conflicts
+        self.metadata_id_count = 30
+        self._add_static_metadata()
+
+        output_lines.extend(self._transform_body(input_lines))
+        output_lines.extend(self._emit_footer())
+
+        return "\n".join(output_lines)
+
+    def _emit_header(self):
+        """generates target configuration header"""
+        return [f'target datalayout = "{self.datalayout}"', f'target triple = "{self.triple}"']
+
+    def _transform_body(self, input_lines):
+        """processes function definitions and body instructions"""
         output_lines = []
-        
-        # 1. Header Replacement
-        output_lines.append(f'target datalayout = "{self.datalayout}"')
-        output_lines.append(f'target triple = "{self.triple}"')
-        
-        # Function signature parsing
-        # Regex to capture function definition
-        # define void @name(...)
-        func_regex = re.compile(r'define void @(\w+)\((.*)\)')
-        
-        in_function = False
-        
-        for line in lines:
-            if line.startswith('target '):
-                continue # Skip old target
-            
-            match = func_regex.search(line)
-            if match:
-                in_function = True
-                func_name = match.group(1)
-                args_str = match.group(2)
-                
-                # Transform arguments and build metadata
-                new_args_str, kernel_meta_ref = self.transform_signature(func_name, args_str)
-                self.kernel_metadata_nodes.append(kernel_meta_ref)
-                
-                # Replace the line
-                new_line = f'define void @{func_name}({new_args_str}) local_unnamed_addr #0 {{'
-                output_lines.append(new_line)
+        is_inside_function = False
+        func_pattern = re.compile(r"define void @(\w+)\((.*)\)")
+
+        for line in input_lines:
+            if line.startswith("target "):
+                continue  # skip original target lines
+
+            func_match = func_pattern.search(line)
+            if func_match:
+                is_inside_function = True
+                kernel_name = func_match.group(1)
+                args_str = func_match.group(2)
+
+                transformed_args, kernel_meta_ref = self._transform_kernel_signature(kernel_name, args_str)
+                self.kernel_metadata_refs.append(kernel_meta_ref)
+
+                output_lines.append(f"define void @{kernel_name}({transformed_args}) local_unnamed_addr #0 {{")
                 continue
-                
-            if in_function and line.strip() == '}':
-                in_function = False
+
+            if is_inside_function and line.strip() == "}":
+                is_inside_function = False
                 output_lines.append(line)
                 continue
 
-            # Body transformation
-            # We need to track variables that hold addrspace(3) pointers
-            # self.shared_vars was populated during signature parsing
-            
-            # Identify return value definition: "%2 = ..."
-            ret_var = None
-            match_assign = re.match(r'^\s*(%[\w\.\d]+)\s*=', line)
-            if match_assign:
-                ret_var = match_assign.group(1)
+            transformed_line = self._transform_instruction(line)
+            output_lines.append(transformed_line)
 
-            # Check if any operand is a known shared variable
-            # Regex to find %name
-            operands = re.findall(r'%[\w\.\d]+', line)
-            # Filter distinct operands, exclude the one being defined
-            input_ops = [op for op in operands if op != ret_var]
-            
-            uses_shared = any(op in self.shared_vars for op in input_ops)
-            
-            current_line = line
-            
-            if uses_shared:
-                # If this instruction uses a shared var, its pointer operands likely usually need to be addrspace(3)
-                # Naive replacement: float* -> float addrspace(3)*
-                # This works for load, store, gep where the pointer is shared.
-                # It might break if mixing pointers, but for this kernel it's fine.
-                current_line = current_line.replace('float*', 'float addrspace(3)*')
-                
-                # If this instruction produces a pointer (like GEP), mark result as shared
-                if ret_var and ('getelementptr' in line or 'bitcast' in line):
-                     self.shared_vars.add(ret_var)
-            else:
-                # Default behavior: float* -> float addrspace(1)*
-                current_line = current_line.replace('float*', 'float addrspace(1)*')
+        return output_lines
 
-            # Intrinsic Lowering: Barrier
-            if "@barrier" in current_line and "call void" in current_line:
-                 # Replace with AIR intrinsic
-                 # tail call void @air.wg.barrier(i32 2, i32 1) #2
-                 current_line = '  tail call void @air.wg.barrier(i32 2, i32 1) #2'
-                 self.has_barrier = True
-            
-            output_lines.append(current_line)
+    def _transform_instruction(self, line):
+        """applies type and intrinsic transformations to single instruction"""
+        # early return for barrier intrinsic replacement
+        if "@barrier" in line and "call void" in line:
+            self.has_barrier_intrinsic = True
+            return "  tail call void @air.wg.barrier(i32 2, i32 1) #2"
 
-        # 2. Append Metadata
-        output_lines.append('')
-        # Attributes
-        output_lines.append('attributes #0 = { argmemonly mustprogress nofree norecurse nosync nounwind willreturn "approx-func-fp-math"="true" "frame-pointer"="all" "min-legal-vector-width"="0" "no-builtins" "no-infs-fp-math"="true" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "unsafe-fp-math"="true" }')
-        
-        # Kernel list
-        output_lines.append('')
-        kernels_str = ', '.join(self.kernel_metadata_nodes)
-        output_lines.append(f'!air.kernel = !{{{kernels_str}}}')
-        output_lines.append('!air.compile_options = !{!15, !16, !17}') # cheating a bit on IDs, I should manage them dynamically
-        output_lines.append('!llvm.ident = !{!18}')
-        output_lines.append('!air.version = !{!19}')
-        output_lines.append('!air.language_version = !{!20}')
-        output_lines.append('!air.source_file_name = !{!21}')
-        
-        # Append generated metadata
-        for meta_line in self.metadata:
-            output_lines.append(meta_line)
+        result_var_name = self._extract_result_variable(line)
+        operand_var_names = self._extract_operand_variables(line, exclude=result_var_name)
+        uses_shared_memory = any(var in self.shared_var_names for var in operand_var_names)
 
-        if self.has_barrier:
-             output_lines.append('')
-             output_lines.append('declare void @air.wg.barrier(i32, i32) local_unnamed_addr #1')
-             output_lines.append('attributes #1 = { convergent mustprogress nounwind willreturn }')
-             output_lines.append('attributes #2 = { convergent nounwind willreturn }')
+        transformed_line = line
+        if uses_shared_memory:
+            transformed_line = transformed_line.replace("float*", "float addrspace(3)*")
+            # track derived pointers from gep/bitcast operations
+            if result_var_name and ("getelementptr" in line or "bitcast" in line):
+                self.shared_var_names.add(result_var_name)
+        else:
+            # default device memory address space
+            transformed_line = transformed_line.replace("float*", "float addrspace(1)*")
 
-        # Append static metadata (IDs 15-30 for now to match my assumption, 
-        # but really I should just offset my counter or append these to the list)
-        # For simplicity in this demo, I will hardcode the common ones and assume my counter starts higher
-        # Or simpler: Just append the big block of static metadata at the end, 
-        # and ensure my dynamic IDs don't conflict.
-        
-        return "\n".join(output_lines)
+        return transformed_line
 
-    def transform_signature(self, func_name, args_str):
-        # args_str: "float* %a, float* %b, i32 %id"
-        # We need to parse this naive comma separation
-        args = [x.strip() for x in args_str.split(',')]
-        
-        new_args = []
-        metadata_node_refs = []
-        
-        buffer_index = 0
-        
-        for i, arg in enumerate(args):
-            parts = arg.split() # ["float*", "%a"]
+    def _extract_result_variable(self, line):
+        """returns variable name being assigned, or none"""
+        match = re.match(r"^\s*(%[\w\.\d]+)\s*=", line)
+        return match.group(1) if match else None
+
+    def _extract_operand_variables(self, line, exclude=None):
+        """returns list of variable names used in instruction"""
+        all_vars = re.findall(r"%[\w\.\d]+", line)
+        return [v for v in all_vars if v != exclude]
+
+    def _transform_kernel_signature(self, kernel_name, args_str):
+        """converts function arguments to metal air format with metadata"""
+        args = [arg.strip() for arg in args_str.split(",")]
+
+        transformed_args = []
+        arg_metadata_refs = []
+        device_buffer_index = 0
+
+        for arg_index, arg in enumerate(args):
+            parts = arg.split()
             type_str = parts[0]
-            name = parts[1] if len(parts) > 1 else ""
-            
-            # Logic to determine type
-            if "float*" in type_str:
-                is_shared = name.startswith("%shared_") or name.startswith("shared_")
-                
-                if is_shared:
-                    # Threadgroup memory
-                    new_type = "float addrspace(3)* nocapture noundef"
-                    new_type += ' "air-buffer-no-alias"'
-                    
-                    new_args.append(f"{new_type} {name}")
-                    self.shared_vars.add(name) # Track argument name
-                    
-                    # Metadata for threadgroup buffer
-                    # Using location_index 0 for first shared mem, need to track separate index?
-                    # For simplicty, let's assume one shared mem arg for now, or track separately.
-                    threadgroup_index = 0 # TODO: increment if multiple
-                    
-                    meta_content = f'!{{i32 {i}, !"air.buffer", !"air.location_index", i32 {threadgroup_index}, i32 1, !"air.read_write", !"air.address_space", i32 3, !"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"float", !"air.arg_name", !"{name.replace("%","")}"}}'
-                    ref = self.add_metadata(meta_content)
-                    metadata_node_refs.append(ref)
-                    
-                else:
-                    # Device buffer
-                    new_type = "float addrspace(1)* nocapture noundef"
-                    if buffer_index == 0:
-                         new_type += ' readonly "air-buffer-no-alias"'
-                    else: 
-                         new_type += ' writeonly "air-buffer-no-alias"'
-                    
-                    new_args.append(f"{new_type} {name}")
-                    
-                    meta_content = f'!{{i32 {i}, !"air.buffer", !"air.location_index", i32 {buffer_index}, i32 1, !"air.read_write", !"air.address_space", i32 1, !"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"float", !"air.arg_name", !"{name.replace("%","")}"}}'
-                    ref = self.add_metadata(meta_content)
-                    metadata_node_refs.append(ref)
-                    
-                    buffer_index += 1
-                
-            elif "i32" in type_str:
-                # Thread ID
-                new_args.append(f"i32 noundef {name}")
-                # Naive: map 'id' to global id (2), 'tid' to threadgroup id (?), let's support basic ones
-                # !14 = !{i32 2, !"air.thread_position_in_grid", ...}
-                # !15 = !{i32 3, !"air.thread_position_in_threadgroup", ...}
-                
-                type_name = "air.thread_position_in_grid"
-                if "tid" in name:
-                    type_name = "air.thread_position_in_threadgroup"
-                
-                meta_content = f'!{{i32 {i}, !"{type_name}", !"air.arg_type_name", !"uint", !"air.arg_name", !"{name.replace("%","")}"}}'
-                ref = self.add_metadata(meta_content)
-                metadata_node_refs.append(ref)
-        
-        # Create function definition metadata node
-        # !9 = !{void (...)* @add, !10, !11}
-        # !11 is the args list
-        
-        arg_list_ref = self.add_metadata(f'!{{{", ".join(metadata_node_refs)}}}')
-        empty_node_ref = self.add_metadata('!{}') # !10
-        
-        # Reconstruct signature for metadata
-        meta_sig_args = []
-        for arg in new_args:
-             base_type = "i32"
-             if "addrspace(1)" in arg:
-                 base_type = "float addrspace(1)*"
-             elif "addrspace(3)" in arg:
-                 base_type = "float addrspace(3)*"
-             meta_sig_args.append(base_type)
-        
-        meta_sig = f"void ({', '.join(meta_sig_args)})*"
-        
-        kernel_node_content = f'!{{{meta_sig} @{func_name}, {empty_node_ref}, {arg_list_ref}}}'
-        return ", ".join(new_args), self.add_metadata(kernel_node_content)
+            var_name = parts[1] if len(parts) > 1 else ""
 
-    def add_static_metadata(self):
-        # Add the rest of the file
-        # This is a bit hacky, but sufficient
-        extras = [
+            if "float*" in type_str:
+                is_shared = var_name.startswith("%shared_") or var_name.startswith("shared_")
+
+                if is_shared:
+                    arg_str, meta_ref = self._create_threadgroup_arg(arg_index, var_name)
+                    self.shared_var_names.add(var_name)
+                else:
+                    arg_str, meta_ref = self._create_device_buffer_arg(arg_index, var_name, device_buffer_index)
+                    device_buffer_index += 1
+
+                transformed_args.append(arg_str)
+                arg_metadata_refs.append(meta_ref)
+
+            elif "i32" in type_str:
+                arg_str, meta_ref = self._create_thread_id_arg(arg_index, var_name)
+                transformed_args.append(arg_str)
+                arg_metadata_refs.append(meta_ref)
+
+        kernel_meta_ref = self._create_kernel_metadata(kernel_name, transformed_args, arg_metadata_refs)
+        return ", ".join(transformed_args), kernel_meta_ref
+
+    def _create_threadgroup_arg(self, arg_index, var_name):
+        """generates threadgroup memory argument with metadata"""
+        arg_type = 'float addrspace(3)* nocapture noundef "air-buffer-no-alias"'
+        arg_str = f"{arg_type} {var_name}"
+
+        # threadgroup buffers use location_index 0 and address_space 3
+        threadgroup_location_index = 0
+        clean_name = var_name.replace("%", "")
+        meta_content = f'!{{i32 {arg_index}, !"air.buffer", !"air.location_index", i32 {threadgroup_location_index}, ' f'i32 1, !"air.read_write", !"air.address_space", i32 3, !"air.arg_type_size", i32 4, ' f'!"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"float", ' f'!"air.arg_name", !"{clean_name}"}}'
+        meta_ref = self._emit_metadata(meta_content)
+        return arg_str, meta_ref
+
+    def _create_device_buffer_arg(self, arg_index, var_name, buffer_index):
+        """generates device buffer argument with metadata"""
+        # first buffer is readonly, subsequent are writeonly
+        access_qualifier = "readonly" if buffer_index == 0 else "writeonly"
+        arg_type = f'float addrspace(1)* nocapture noundef {access_qualifier} "air-buffer-no-alias"'
+        arg_str = f"{arg_type} {var_name}"
+
+        clean_name = var_name.replace("%", "")
+        meta_content = f'!{{i32 {arg_index}, !"air.buffer", !"air.location_index", i32 {buffer_index}, ' f'i32 1, !"air.read_write", !"air.address_space", i32 1, !"air.arg_type_size", i32 4, ' f'!"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"float", ' f'!"air.arg_name", !"{clean_name}"}}'
+        meta_ref = self._emit_metadata(meta_content)
+        return arg_str, meta_ref
+
+    def _create_thread_id_arg(self, arg_index, var_name):
+        """generates thread id argument with metadata"""
+        arg_str = f"i32 noundef {var_name}"
+
+        # infer thread id type from variable name
+        id_type = "air.thread_position_in_threadgroup" if "tid" in var_name else "air.thread_position_in_grid"
+        clean_name = var_name.replace("%", "")
+        meta_content = f'!{{i32 {arg_index}, !"{id_type}", !"air.arg_type_name", !"uint", ' f'!"air.arg_name", !"{clean_name}"}}'
+        meta_ref = self._emit_metadata(meta_content)
+        return arg_str, meta_ref
+
+    def _create_kernel_metadata(self, kernel_name, transformed_args, arg_metadata_refs):
+        """creates kernel function metadata node"""
+        arg_list_ref = self._emit_metadata(f'!{{{", ".join(arg_metadata_refs)}}}')
+        empty_node_ref = self._emit_metadata("!{}")
+
+        # reconstruct function signature for metadata
+        signature_types = []
+        for arg in transformed_args:
+            if "addrspace(1)" in arg:
+                signature_types.append("float addrspace(1)*")
+            elif "addrspace(3)" in arg:
+                signature_types.append("float addrspace(3)*")
+            else:
+                signature_types.append("i32")
+
+        signature_str = f"void ({', '.join(signature_types)})*"
+        kernel_node_content = f"!{{{signature_str} @{kernel_name}, {empty_node_ref}, {arg_list_ref}}}"
+        return self._emit_metadata(kernel_node_content)
+
+    def _emit_footer(self):
+        """generates metadata and declarations section"""
+        lines = [""]
+
+        # function attributes
+        lines.append("attributes #0 = { argmemonly mustprogress nofree norecurse nosync nounwind willreturn " '"approx-func-fp-math"="true" "frame-pointer"="all" "min-legal-vector-width"="0" ' '"no-builtins" "no-infs-fp-math"="true" "no-nans-fp-math"="true" ' '"no-signed-zeros-fp-math"="true" "no-trapping-math"="true" ' '"stack-protector-buffer-size"="8" "unsafe-fp-math"="true" }')
+
+        # kernel list and compile options
+        lines.append("")
+        kernels_str = ", ".join(self.kernel_metadata_refs)
+        lines.append(f"!air.kernel = !{{{kernels_str}}}")
+        lines.append("!air.compile_options = !{!15, !16, !17}")
+        lines.append("!llvm.ident = !{!18}")
+        lines.append("!air.version = !{!19}")
+        lines.append("!air.language_version = !{!20}")
+        lines.append("!air.source_file_name = !{!21}")
+
+        # metadata nodes
+        lines.append("")
+        lines.extend(self.metadata_lines)
+
+        # barrier intrinsic declaration if used
+        if self.has_barrier_intrinsic:
+            lines.append("")
+            lines.append("declare void @air.wg.barrier(i32, i32) local_unnamed_addr #1")
+            lines.append("attributes #1 = { convergent mustprogress nounwind willreturn }")
+            lines.append("attributes #2 = { convergent nounwind willreturn }")
+
+        return lines
+
+    def _add_static_metadata(self):
+        """pre-allocates common metadata nodes with fixed ids"""
+        static_nodes = [
             '!15 = !{!"air.compile.denorms_disable"}',
             '!16 = !{!"air.compile.fast_math_enable"}',
             '!17 = !{!"air.compile.framebuffer_fetch_enable"}',
             '!18 = !{!"Apple metal version 32023.830 (metalfe-32023.830.2)"}',
-            '!19 = !{i32 2, i32 7, i32 0}',
+            "!19 = !{i32 2, i32 7, i32 0}",
             '!20 = !{!"Metal", i32 3, i32 2, i32 0}',
             '!21 = !{!"input.ll"}',
         ]
-        for e in extras:
-            self.metadata.append(e)
+        self.metadata_lines.extend(static_nodes)
+
 
 if __name__ == "__main__":
-    import sys
-    
-    with open(sys.argv[1], 'r') as f:
-        content = f.read()
-    
+    if len(sys.argv) < 2:
+        print("Usage: python air_forge.py <input.ll>", file=sys.stderr)
+        sys.exit(1)
+
+    input_path = sys.argv[1]
+    with open(input_path, "r") as f:
+        input_content = f.read()
+
     forge = AIRForge()
-    # PRE-ALLOCATE IDs to avoid conflict with my naive add_metadata which starts at 0?
-    # Actually, let's start my ID counter at 30 to be safe
-    forge.metadata_id_counter = 30
-    forge.add_static_metadata()
-    
-    print(forge.process(content))
+    output_content = forge.process(input_content)
+    print(output_content)

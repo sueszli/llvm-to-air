@@ -8,12 +8,9 @@
 import platform
 import subprocess
 import sys
-import os
-import re
 
-from xdsl.builder import Builder, InsertPoint
-from xdsl.dialects import llvm, builtin, arith
-from xdsl.dialects.builtin import ModuleOp, StringAttr, IntegerAttr, FloatAttr, i32, f32
+from xdsl.dialects import arith, llvm
+from xdsl.dialects.builtin import FloatAttr, IntegerAttr, ModuleOp, f32, i32
 from xdsl.ir import Block, Region, SSAValue
 
 # Import AIRForge from local file
@@ -23,176 +20,162 @@ except ImportError:
     print("Error: air_forge.py not found in current directory.")
     sys.exit(1)
 
+
 def assert_system_requirements():
-    # 1. Assert ARM machine
-    machine = platform.machine()
-    if machine != 'arm64':
-        print(f"Error: This script requires an ARM64 machine, but found {machine}")
+    # guard: metal air requires arm64 architecture
+    machine_arch = platform.machine()
+    if machine_arch != "arm64":
+        print(f"Error: This script requires an ARM64 machine, but found {machine_arch}")
         sys.exit(1)
-    
-    # 2. Get macOS version
-    mac_ver = platform.mac_ver()[0]
-    major_ver = mac_ver.split('.')[0]
-    
-    # User requested to set macosx15 to whatever version the os of the user is on
-    # Only if it is reasonably close to modern macOS
-    return f"macosx{major_ver}.0.0"
+
+    # extract major version for target triple (e.g., "15" from "15.2.1")
+    macos_version_str = platform.mac_ver()[0]
+    major_version_str = macos_version_str.split(".")[0]
+
+    return f"macosx{major_version_str}.0.0"
+
 
 class LLVMIRPrinter:
-    """
-    Simple printer to convert xDSL LLVM dialect Ops to standard LLVM IR text
-    compatible with air_forge.py expectations.
-    """
+    """converts xdsl llvm dialect ops to standard llvm ir text"""
+
     def __init__(self):
         self.value_map = {}
-        self.name_counter = 0
-        self.output = []
+        self.next_value_id = 0
+        self.output_lines = []
 
     def get_value_name(self, value: SSAValue) -> str:
+        # memoize ssa value names to ensure consistent references
         if value not in self.value_map:
-            self.value_map[value] = f"%{self.name_counter}"
-            self.name_counter += 1
+            self.value_map[value] = f"%{self.next_value_id}"
+            self.next_value_id += 1
         return self.value_map[value]
 
     def print_module(self, module: ModuleOp) -> str:
-        self.output = []
+        self.output_lines = []
         for op in module.body.blocks[0].ops:
             if isinstance(op, llvm.FuncOp):
                 self.print_func(op)
-        return "\n".join(self.output)
+        return "\n".join(self.output_lines)
 
     def print_func(self, func: llvm.FuncOp):
-        # define void @test_kernel(float* %in, float* %out, i32 %id)
-        name = func.sym_name.data
-        
-        args = []
-        for i, arg in enumerate(func.body.blocks[0].args):
-            # Give arguments meaningful names instead of numbers
-            arg_names = ["in", "out", "id"]
-            arg_name = arg_names[i] if i < len(arg_names) else f"arg{i}"
-            # Map argument values with names
-            self.value_map[arg] = f"%{arg_name}"
-            
-            # Hacky type inference for printer based on what we know we built
-            if i < 2:
-                type_str = "float*"
-            else:
-                type_str = "i32"
-            args.append(f"{type_str} %{arg_name}")
-        
-        # Reset counter for body instructions to start at %1
-        self.name_counter = 1
-            
-        arg_str = ", ".join(args)
-        self.output.append(f"define void @{name}({arg_str}) {{")
-        
-        # Body
+        func_name = func.sym_name.data
+        func_args = func.body.blocks[0].args
+
+        # map function arguments to named values
+        arg_names = ["in", "out", "thread_idx"]
+        arg_strs = []
+        for arg_idx, arg_value in enumerate(func_args):
+            has_predefined_name = arg_idx < len(arg_names)
+            arg_name = arg_names[arg_idx] if has_predefined_name else f"arg{arg_idx}"
+            self.value_map[arg_value] = f"%{arg_name}"
+
+            # type inference based on position: first two are pointers, third is thread index
+            is_pointer_arg = arg_idx < 2
+            type_str = "float*" if is_pointer_arg else "i32"
+            arg_strs.append(f"{type_str} %{arg_name}")
+
+        # reset counter for body instructions to start at %1
+        self.next_value_id = 1
+
+        self.output_lines.append(f"define void @{func_name}({', '.join(arg_strs)}) {{")
+
         for op in func.body.blocks[0].ops:
             self.print_op(op)
-            
-        self.output.append("}")
+
+        self.output_lines.append("}")
 
     def print_op(self, op):
         if isinstance(op, llvm.GEPOp):
-            # %val = getelementptr float, float* %ptr, i32 %idx
-            res = self.get_value_name(op.results[0])
-            ptr = self.get_value_name(op.ptr)
-            # ssa_indices contains dynamic SSA operands
-            idx = self.get_value_name(op.ssa_indices[0]) 
-            self.output.append(f"  {res} = getelementptr float, float* {ptr}, i32 {idx}")
-            
+            result_name = self.get_value_name(op.results[0])
+            ptr_name = self.get_value_name(op.ptr)
+            idx_name = self.get_value_name(op.ssa_indices[0])
+            self.output_lines.append(f"  {result_name} = getelementptr float, float* {ptr_name}, i32 {idx_name}")
+
         elif isinstance(op, llvm.LoadOp):
-            # %val = load float, float* %ptr
-            res = self.get_value_name(op.dereferenced_value)
-            ptr = self.get_value_name(op.ptr)
-            self.output.append(f"  {res} = load float, float* {ptr}")
-            
+            result_name = self.get_value_name(op.dereferenced_value)
+            ptr_name = self.get_value_name(op.ptr)
+            self.output_lines.append(f"  {result_name} = load float, float* {ptr_name}")
+
         elif isinstance(op, llvm.FMulOp):
-            # %val = fmul float %lhs, %rhs
-            res = self.get_value_name(op.res)
-            lhs = self.get_value_name(op.lhs)
-            rhs = self.get_value_name(op.rhs)
-            self.output.append(f"  {res} = fmul float {lhs}, {rhs}")
+            result_name = self.get_value_name(op.res)
+            lhs_name = self.get_value_name(op.lhs)
+            rhs_name = self.get_value_name(op.rhs)
+            self.output_lines.append(f"  {result_name} = fmul float {lhs_name}, {rhs_name}")
 
         elif isinstance(op, llvm.StoreOp):
-            # store float %val, float* %ptr
-            val = self.get_value_name(op.value)
-            ptr = self.get_value_name(op.ptr)
-            self.output.append(f"  store float {val}, float* {ptr}")
-            
+            value_name = self.get_value_name(op.value)
+            ptr_name = self.get_value_name(op.ptr)
+            self.output_lines.append(f"  store float {value_name}, float* {ptr_name}")
+
         elif isinstance(op, llvm.ReturnOp):
-            self.output.append("  ret void")
-            
+            self.output_lines.append("  ret void")
+
         elif isinstance(op, arith.ConstantOp):
-            # Map constant SSA value to literal for inlining
-            val = op.value
-            if isinstance(val, FloatAttr):
-                self.value_map[op.results[0]] = f"{val.value.data:e}"
-            elif isinstance(val, IntegerAttr):
-                self.value_map[op.results[0]] = str(val.value.data)
+            # inline constants to avoid unnecessary ssa assignments in llvm ir
+            const_attr = op.value
+            if isinstance(const_attr, FloatAttr):
+                self.value_map[op.results[0]] = f"{const_attr.value.data:e}"
+            elif isinstance(const_attr, IntegerAttr):
+                self.value_map[op.results[0]] = str(const_attr.value.data)
+
 
 def create_xdsl_module():
-    # Construct Module with xDSL
+    """creates xdsl module with test_kernel: void(float*, float*, i32)"""
     module = ModuleOp([])
-    
-    # Function Signature
-    # void test_kernel(float* %in, float* %out, i32 %id)
-    # xDSL LLVMPointerType is opaque by default now
+
+    # build function signature: void test_kernel(float* %in, float* %out, i32 %id)
     ptr_type = llvm.LLVMPointerType()
-    args_types = [ptr_type, ptr_type, i32]
-    func_type = llvm.LLVMFunctionType(args_types, llvm.LLVMVoidType())
-    
-    func = llvm.FuncOp("test_kernel", func_type, linkage=llvm.LinkageAttr("external"))
-    
-    block = Block(arg_types=args_types)
-    func.body = Region(block)
-    
-    # Instructions
-    # GEP In
-    ptr_in, ptr_out, idx = block.args
-    # GEPOp(ptr, indices=[], pointee_type, ssa_indices=[dynamic_indices])
-    gep_in = llvm.GEPOp(ptr_in, [], f32, ssa_indices=[idx])
-    block.add_op(gep_in)
-    
-    # Load In
-    # llvm.LoadOp(ptr, type) -> result
-    val_in = llvm.LoadOp(gep_in.results[0], f32) 
-    block.add_op(val_in)
-    
-    # Const 2.0
-    const_two = arith.ConstantOp(FloatAttr(2.0, f32))
-    block.add_op(const_two)
-    
-    # Mul
-    mul = llvm.FMulOp(val_in.results[0], const_two.results[0])
-    block.add_op(mul)
-    
-    # GEP Out
-    gep_out = llvm.GEPOp(ptr_out, [], f32, ssa_indices=[idx])
-    block.add_op(gep_out)
-    
-    # Store
-    # llvm.StoreOp(val, ptr)
-    store = llvm.StoreOp(mul.results[0], gep_out.results[0])
-    block.add_op(store)
-    
-    # Ret
-    ret = llvm.ReturnOp.create()
-    block.add_op(ret)
-    
-    module.body.blocks[0].add_op(func)
+    arg_types = [ptr_type, ptr_type, i32]
+    func_type = llvm.LLVMFunctionType(arg_types, llvm.LLVMVoidType())
+
+    kernel_func = llvm.FuncOp("test_kernel", func_type, linkage=llvm.LinkageAttr("external"))
+    entry_block = Block(arg_types=arg_types)
+    kernel_func.body = Region(entry_block)
+
+    # build kernel body: out[id] = in[id] * 2.0
+    ptr_in, ptr_out, thread_id = entry_block.args
+
+    gep_in = llvm.GEPOp(ptr_in, [], f32, ssa_indices=[thread_id])
+    entry_block.add_op(gep_in)
+
+    load_in = llvm.LoadOp(gep_in.results[0], f32)
+    entry_block.add_op(load_in)
+
+    const_multiplier = arith.ConstantOp(FloatAttr(2.0, f32))
+    entry_block.add_op(const_multiplier)
+
+    mul_result = llvm.FMulOp(load_in.results[0], const_multiplier.results[0])
+    entry_block.add_op(mul_result)
+
+    gep_out = llvm.GEPOp(ptr_out, [], f32, ssa_indices=[thread_id])
+    entry_block.add_op(gep_out)
+
+    store_out = llvm.StoreOp(mul_result.results[0], gep_out.results[0])
+    entry_block.add_op(store_out)
+
+    ret_void = llvm.ReturnOp.create()
+    entry_block.add_op(ret_void)
+
+    module.body.blocks[0].add_op(kernel_func)
     return module
 
-def run_command(cmd, shell=True):
-    print(f"Running: {cmd}")
-    result = subprocess.run(cmd, shell=shell, user="sueszli", capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"Command failed: {cmd}")
+
+def run_command(cmd_str, shell=True):
+    """executes shell command and exits on failure"""
+    print(f"Running: {cmd_str}")
+    result = subprocess.run(cmd_str, shell=shell, user="sueszli", capture_output=True, text=True)
+
+    # guard: exit early on command failure
+    command_failed = result.returncode != 0
+    if command_failed:
+        print(f"Command failed: {cmd_str}")
         print(result.stderr)
         sys.exit(1)
+
     return result.stdout
 
-RUNNER_SOURCE = r'''
+
+RUNNER_SOURCE = r"""
 #include <iostream>
 #include <vector>
 #import <Metal/Metal.h>
@@ -226,12 +209,12 @@ int main() {
         id<MTLComputePipelineState> pso = [device newComputePipelineStateWithFunction:fn error:&error];
         if (!pso) return 1;
 
-        const int count = 4;
-        float inputData[count] = {10.0f, 20.0f, 30.0f, 40.0f};
-        NSUInteger dataSize = count * sizeof(float);
+        const int element_count = 4;
+        float inputData[element_count] = {10.0f, 20.0f, 30.0f, 40.0f};
+        NSUInteger buffer_size_bytes = element_count * sizeof(float);
 
-        id<MTLBuffer> bufferIn = [device newBufferWithBytes:inputData length:dataSize options:MTLResourceStorageModeShared];
-        id<MTLBuffer> bufferOut = [device newBufferWithLength:dataSize options:MTLResourceStorageModeShared];
+        id<MTLBuffer> bufferIn = [device newBufferWithBytes:inputData length:buffer_size_bytes options:MTLResourceStorageModeShared];
+        id<MTLBuffer> bufferOut = [device newBufferWithLength:buffer_size_bytes options:MTLResourceStorageModeShared];
 
         id<MTLCommandQueue> queue = [device newCommandQueue];
         id<MTLCommandBuffer> cmdbuf = [queue commandBuffer];
@@ -241,8 +224,8 @@ int main() {
         [encoder setBuffer:bufferIn offset:0 atIndex:0];
         [encoder setBuffer:bufferOut offset:0 atIndex:1];
 
-        MTLSize gridSize = MTLSizeMake(count, 1, 1);
-        MTLSize threadGroupSize = MTLSizeMake(count, 1, 1);
+        MTLSize gridSize = MTLSizeMake(element_count, 1, 1);
+        MTLSize threadGroupSize = MTLSizeMake(element_count, 1, 1);
         [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadGroupSize];
         [encoder endEncoding];
 
@@ -251,10 +234,11 @@ int main() {
 
         float* results = (float*)bufferOut.contents;
         bool success = true;
-        for (int i = 0; i < count; ++i) {
-            float expected = inputData[i] * 2.0f;
-            if (results[i] != expected) {
-                std::cout << "Mismatch at " << i << ": got " << results[i] << " expected " << expected << std::endl;
+        for (int elem_idx = 0; elem_idx < element_count; ++elem_idx) {
+            float expected = inputData[elem_idx] * 2.0f;
+            bool result_matches = results[elem_idx] == expected;
+            if (!result_matches) {
+                std::cout << "Mismatch at " << elem_idx << ": got " << results[elem_idx] << " expected " << expected << std::endl;
                 success = false;
             }
         }
@@ -268,62 +252,62 @@ int main() {
     }
     return 0;
 }
-'''
+"""
+
 
 def main():
-    target_os = assert_system_requirements()
-    print(f"Target OS Triple Suffix: {target_os}")
-    
-    # 1. Generate xDSL
+    """full pipeline: xdsl -> llvm ir -> metal air -> gpu execution"""
+    target_os_version = assert_system_requirements()
+    print(f"Target OS Triple Suffix: {target_os_version}")
+
     print("Generating xDSL module...")
-    module = create_xdsl_module()
-    
-    # 2. Print to LLVM IR
+    xdsl_module = create_xdsl_module()
+
     print("Converting xDSL to LLVM IR...")
-    printer = LLVMIRPrinter()
-    llvm_ir = printer.print_module(module)
+    ir_printer = LLVMIRPrinter()
+    llvm_ir_str = ir_printer.print_module(xdsl_module)
     print("--- Generated LLVM IR ---")
-    print(llvm_ir)
+    print(llvm_ir_str)
     print("-------------------------")
-    
-    # 3. Forge AIR
+
     print("Forging AIR...")
-    forge = AIRForge()
-    # Update Triple
-    forge.triple = f"air64_v27-apple-{target_os}"
-    # Setup metadata properly
-    forge.metadata_id_counter = 30
-    forge.add_static_metadata()
-    air_ll = forge.process(llvm_ir)
-    
-    with open("demo_forged.ll", "w") as f:
-        f.write(air_ll)
-        
+    air_forge = AIRForge()
+    air_forge.triple = f"air64_v27-apple-{target_os_version}"
+    air_llvm_ir_str = air_forge.process(llvm_ir_str)
+
+    forged_ll_path = "demo_forged.ll"
+    with open(forged_ll_path, "w") as f:
+        f.write(air_llvm_ir_str)
+
+    preview_line_count = 20
     print("--- Forged AIR LLVM IR ---")
-    print("\n".join(air_ll.splitlines()[:20]) + "\n... (truncated)")
+    print("\n".join(air_llvm_ir_str.splitlines()[:preview_line_count]) + "\n... (truncated)")
     print("--------------------------")
-    
-    # 4. Compile to Metal Lib
+
     print("Compiling to metallib...")
-    run_command("xcrun -sdk macosx metal -c demo_forged.ll -o demo.air")
-    run_command("xcrun -sdk macosx metallib demo.air -o demo.metallib")
-    
-    # 5. Run w/ Metal
+    air_path = "demo.air"
+    metallib_path = "demo.metallib"
+    run_command(f"xcrun -sdk macosx metal -c {forged_ll_path} -o {air_path}")
+    run_command(f"xcrun -sdk macosx metallib {air_path} -o {metallib_path}")
+
     print("Compiling runner...")
-    with open("runner.mm", "w") as f:
+    runner_source_path = "runner.mm"
+    runner_binary_path = "runner"
+    with open(runner_source_path, "w") as f:
         f.write(RUNNER_SOURCE)
-    
-    run_command("clang++ -framework Metal -framework Foundation runner.mm -o runner")
-    
+
+    run_command(f"clang++ -framework Metal -framework Foundation {runner_source_path} -o {runner_binary_path}")
+
     print("Executing runner...")
-    output = run_command("./runner", shell=False)
-    # delete runner
-    run_command("rm runner")
-    run_command("rm runner.mm")
-    run_command("rm demo.air")
-    run_command("rm demo.metallib")
-    run_command("rm demo_forged.ll")
-    print(output)
+    runner_output = run_command(f"./{runner_binary_path}", shell=False)
+
+    # cleanup temporary files to avoid polluting workspace
+    temp_files = [runner_binary_path, runner_source_path, air_path, metallib_path, forged_ll_path]
+    for temp_path in temp_files:
+        run_command(f"rm {temp_path}")
+
+    print(runner_output)
+
 
 if __name__ == "__main__":
     main()
