@@ -21,8 +21,7 @@ int main() {
         id<MTLLibrary> library = [device newLibraryWithURL:libURL error:&error];
         
         if (!library) {
-            std::cerr << "failed to load library '" << [libPath UTF8String] << "': " 
-                      << [[error localizedDescription] UTF8String] << std::endl;
+            std::cerr << "failed to load library '" << [libPath UTF8String] << "': " << [[error localizedDescription] UTF8String] << std::endl;
             return 1;
         }
 
@@ -59,8 +58,7 @@ int main() {
         [encoder setBuffer:bufferA offset:0 atIndex:0];
         [encoder setBuffer:bufferB offset:0 atIndex:1];
 
-        // dispatch
-        // for simple 1D, we can use dispatchThreads provided the device supports it (Apple Silicon does)
+        // dispatch (for simple 1D, we can use dispatchThreads)
         MTLSize gridSize = MTLSizeMake(count, 1, 1);
         NSUInteger threadsPerGroupVal = std::min((NSUInteger)pso.maxTotalThreadsPerThreadgroup, (NSUInteger)count);
         MTLSize threadGroupSize = MTLSizeMake(threadsPerGroupVal, 1, 1);
@@ -78,8 +76,7 @@ int main() {
         bool success = true;
         for (int i = 0; i < count; ++i) {
             float expected = rawData[i] + 1.0f;
-            std::cout << "[" << i << "] input: " << rawData[i] 
-                      << " -> output: " << resultPtr[i];
+            std::cout << "[" << i << "] input: " << rawData[i] << " -> output: " << resultPtr[i];
             if (resultPtr[i] != expected) {
                 std::cout << " (FAIL: expected " << expected << ")";
                 success = false;

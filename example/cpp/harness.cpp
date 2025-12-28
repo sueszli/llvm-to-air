@@ -1,3 +1,4 @@
+#include <cassert>
 #define NS_PRIVATE_IMPLEMENTATION
 #define CA_PRIVATE_IMPLEMENTATION
 #define MTL_PRIVATE_IMPLEMENTATION
@@ -27,8 +28,7 @@ int main() {
     MTL::Library* library = device->newLibrary(libPath, &error);
     
     if (!library) {
-        std::cerr << "ERROR: failed to load library 'shader.metallib': " 
-                  << error->localizedDescription()->utf8String() << std::endl;
+        std::cerr << "ERROR: failed to load library 'shader.metallib': " << error->localizedDescription()->utf8String() << std::endl;
         return 1;
     }
 
@@ -80,14 +80,8 @@ int main() {
     bool success = true;
     for (int i = 0; i < count; ++i) {
         float expected = rawData[i] + 1.0f;
-        std::cout << "[" << i << "] input: " << rawData[i] 
-                  << " -> output: " << resultPtr[i];
-        if (resultPtr[i] != expected) {
-            std::cout << " (FAIL: expected " << expected << ")";
-            success = false;
-        } else {
-            std::cout << " (OK)";
-        }
+        std::cout << "[" << i << "] input: " << rawData[i] << " -> output: " << resultPtr[i];
+        assert(resultPtr[i] == expected);
         std::cout << std::endl;
     }
     
@@ -99,7 +93,7 @@ int main() {
     library->release();
     commandQueue->release();
     device->release();
-    
+
     pool->release();
 
     if (success) {

@@ -1,8 +1,9 @@
 #!/bin/bash
 set -e
 
-# make sure version matches your os
-# https://developer.apple.com/metal/cpp/
+# see: https://developer.apple.com/metal/cpp/
+# set the url to the correct version for your OS
+# retrieve your macOS version with `sw_vers -productVersion`
 METAL_CPP_URL="https://developer.apple.com/metal/cpp/files/metal-cpp_macOS15_iOS18.zip"
 DEST_DIR="metal-cpp"
 

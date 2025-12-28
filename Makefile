@@ -1,20 +1,12 @@
-# 
-# venv
-# 
-
-# init venv from imports
-.PHONY: venv
-venv:
-	test -f requirements.txt || (uvx pipreqs . --mode no-pin --encoding utf-8 --ignore .venv && mv requirements.txt requirements.in && uv pip compile requirements.in -o requirements.txt)
-	uv venv .venv --python 3.11
-	uv pip install -r requirements.txt
-	@echo "activate venv with: \033[1;33msource .venv/bin/activate\033[0m"
-
-# dump + compile dependencies
-.PHONY: lock
-lock:
-	uv pip freeze > requirements.in
-	uv pip compile requirements.in -o requirements.txt
+.PHONY: run
+run:
+	# uv run src/gen_input.py > src/input.ll  ----> somehow breaks assert statement
+	uv run src/air_forge.py src/input.ll > src/test.ll
+	xcrun -sdk macosx metal -c src/test.ll -o src/test.air
+	xcrun -sdk macosx metallib src/test.air -o src/test.metallib
+	clang++ -std=c++17 -framework Metal -framework Foundation src/verify.mm -o src/verify
+	./src/verify
+	rm -rf src/test.ll src/test.air src/test.metallib src/verify
 
 .PHONY: fmt
 fmt:
@@ -24,23 +16,3 @@ fmt:
 	uvx isort .
 	uvx autoflake --remove-all-unused-imports --recursive --in-place .
 	uvx black --line-length 5000 .
-
-# 
-# docker
-# 
-
-DOCKER_RUN = docker run --rm -p 9090:9090 -v $(PWD):/workspace main sh -c
-
-.PHONY: docker-build
-docker-build:
-	docker build -t main .
- 
-.PHONY: docker-run
-docker-run:
-	$(DOCKER_RUN) "python3 /workspace/src/mnist.py"
-
-.PHONY: docker-clean
-docker-clean:
-	# docker compose down --rmi all --volumes --remove-orphans
-	# docker system prune -a -f
-	docker rmi -f main:latest
