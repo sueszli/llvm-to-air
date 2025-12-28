@@ -14,7 +14,7 @@ int main(int argc, char* argv[]) {
 
         NSError* error = nil;
         NSString* cwd = [[NSFileManager defaultManager] currentDirectoryPath];
-        NSString* libPath = [cwd stringByAppendingPathComponent:@"tests/test.metallib"];
+        NSString* libPath = [cwd stringByAppendingPathComponent:@"test.metallib"];
         
         NSURL* libURL = [NSURL fileURLWithPath:libPath];
         id<MTLLibrary> library = [device newLibraryWithURL:libURL error:&error];

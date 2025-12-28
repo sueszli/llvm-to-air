@@ -1,11 +1,12 @@
 #!/bin/bash
 set -e
 
-echo "Forging AIR..."
-python3 air_forge.py tests/input.ll > tests/test.ll
-xcrun -sdk macosx metal -c tests/test.ll -o tests/test.air
-xcrun -sdk macosx metallib tests/test.air -o tests/test.metallib
-echo "Compiling harness..."
-clang++ -std=c++17 -framework Metal -framework Foundation tests/verify.mm -o tests/verify
-echo "Running verification..."
-./tests/verify
+echo "forging AIR..."
+python3 air_forge.py input.ll > test.ll
+xcrun -sdk macosx metal -c test.ll -o test.air
+xcrun -sdk macosx metallib test.air -o test.metallib
+echo "compiling harness..."
+clang++ -std=c++17 -framework Metal -framework Foundation verify.mm -o verify
+echo "running verification..."
+./verify
+rm test.ll test.air test.metallib verify
