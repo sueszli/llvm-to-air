@@ -1,3 +1,4 @@
+#include <cassert>
 #include <iostream>
 #include <vector>
 #include <algorithm>
@@ -8,7 +9,7 @@ int main(int argc, char* argv[]) {
     @autoreleasepool {
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
         if (!device) {
-            std::cerr << "Error: Metal is not supported on this device." << std::endl;
+            std::cerr << "ERROR: metal is not supported on this device." << std::endl;
             return 1;
         }
 
@@ -20,19 +21,19 @@ int main(int argc, char* argv[]) {
         id<MTLLibrary> library = [device newLibraryWithURL:libURL error:&error];
         
         if (!library) {
-            std::cerr << "Failed to load library: " << [[error localizedDescription] UTF8String] << std::endl;
+            std::cerr << "ERROR: failed to load library: " << [[error localizedDescription] UTF8String] << std::endl;
             return 1;
         }
 
         id<MTLFunction> fn = [library newFunctionWithName:@"test_kernel"];
         if (!fn) {
-            std::cerr << "Failed to find function 'test_kernel'." << std::endl;
+            std::cerr << "ERROR: failed to find function 'test_kernel'." << std::endl;
             return 1;
         }
 
         id<MTLComputePipelineState> pso = [device newComputePipelineStateWithFunction:fn error:&error];
         if (!pso) {
-            std::cerr << "Failed to create pipeline state: " << [[error localizedDescription] UTF8String] << std::endl;
+            std::cerr << "ERROR: failed to create pipeline state: " << [[error localizedDescription] UTF8String] << std::endl;
             return 1;
         }
 
@@ -51,7 +52,7 @@ int main(int argc, char* argv[]) {
         [encoder setBuffer:bufferA offset:0 atIndex:0];
         [encoder setBuffer:bufferB offset:0 atIndex:1];
 
-        // Shared Memory (4 floats)
+        // shared memory (4 floats)
         [encoder setThreadgroupMemoryLength:count*sizeof(float) atIndex:0];
 
         MTLSize gridSize = MTLSizeMake(count, 1, 1);
@@ -64,25 +65,18 @@ int main(int argc, char* argv[]) {
         [commandBuffer waitUntilCompleted];
 
         float* resultPtr = (float*)bufferB.contents;
-        std::cout << "Results:" << std::endl;
-        bool success = true;
+        std::cout << "results:" << std::endl;
         for (int i = 0; i < count; ++i) {
             int neighbor_idx = i ^ 1;
             float expected = rawData[neighbor_idx];
             
-            std::cout << "[" << i << "] In: " << rawData[i] 
-                      << " -> Out: " << resultPtr[i]
-                      << " (Exp: " << expected << ")";
-            
-            if (resultPtr[i] != expected) {
-                std::cout << " FAIL";
-                success = false;
-            } else {
-                std::cout << " OK";
-            }
+            std::cout << "[" << i << "] in: " << rawData[i] << " -> out: " << resultPtr[i] << " (exp: " << expected << ")";
+
+            assert(resultPtr[i] == expected);
+            std::cout << " OK";
             std::cout << std::endl;
         }
         
-        return success ? 0 : 1;
+        return 0;
     }
 }

@@ -1,32 +1,12 @@
 # /// script
 # dependencies = [
 #     "xdsl",
-#     "lark",
 # ]
 # ///
 
-import platform
-import subprocess
-import sys
-
 from xdsl.dialects import arith, llvm
-from xdsl.dialects.builtin import FloatAttr, IntegerAttr, ModuleOp, f32, i32
+from xdsl.dialects.builtin import FloatAttr, ModuleOp, f32, i32
 from xdsl.ir import Block, Region, SSAValue
-
-from air_forge import AIRForge
-
-
-def assert_system_requirements():
-    # guard: metal air requires arm64 architecture
-    machine_arch = platform.machine()
-    if machine_arch != "arm64":
-        print(f"Error: This script requires an ARM64 machine, but found {machine_arch}")
-        sys.exit(1)
-
-    # extract major version for target triple (e.g., "15" from "15.2.1")
-    macos_version_str = platform.mac_ver()[0]
-    major_version_str = macos_version_str.split(".")[0]
-    return f"macosx{major_version_str}.0.0"
 
 
 class LLVMIRPrinter:
@@ -109,8 +89,6 @@ class LLVMIRPrinter:
             const_attr = op.value
             if isinstance(const_attr, FloatAttr):
                 self.value_map[op.results[0]] = f"{const_attr.value.data:e}"
-            elif isinstance(const_attr, IntegerAttr):
-                self.value_map[op.results[0]] = str(const_attr.value.data)
 
 
 def create_xdsl_module():
@@ -154,154 +132,8 @@ def create_xdsl_module():
     return module
 
 
-def run_command(cmd_str, shell=True):
-    """executes shell command and exits on failure"""
-    print(f"Running: {cmd_str}")
-    result = subprocess.run(cmd_str, shell=shell, user="sueszli", capture_output=True, text=True)
-
-    # guard: exit early on command failure
-    command_failed = result.returncode != 0
-    if command_failed:
-        print(f"Command failed: {cmd_str}")
-        print(result.stderr)
-        sys.exit(1)
-
-    return result.stdout
-
-
-RUNNER_SOURCE = r"""
-#include <iostream>
-#include <vector>
-#import <Metal/Metal.h>
-#import <Foundation/Foundation.h>
-
-int main() {
-    @autoreleasepool {
-        id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-        if (!device) {
-            std::cerr << "Metal not supported." << std::endl;
-            return 1;
-        }
-
-        NSError* error = nil;
-        NSString* cwd = [[NSFileManager defaultManager] currentDirectoryPath];
-        NSString* libPath = [cwd stringByAppendingPathComponent:@"demo.metallib"];
-        
-        NSURL* libURL = [NSURL fileURLWithPath:libPath];
-        id<MTLLibrary> library = [device newLibraryWithURL:libURL error:&error];
-        if (!library) {
-            std::cerr << "Failed to load library: " << [[error localizedDescription] UTF8String] << std::endl;
-            return 1;
-        }
-
-        id<MTLFunction> fn = [library newFunctionWithName:@"test_kernel"];
-        if (!fn) {
-            std::cerr << "Function 'test_kernel' not found." << std::endl;
-            return 1;
-        }
-
-        id<MTLComputePipelineState> pso = [device newComputePipelineStateWithFunction:fn error:&error];
-        if (!pso) return 1;
-
-        const int element_count = 4;
-        float inputData[element_count] = {10.0f, 20.0f, 30.0f, 40.0f};
-        NSUInteger buffer_size_bytes = element_count * sizeof(float);
-
-        id<MTLBuffer> bufferIn = [device newBufferWithBytes:inputData length:buffer_size_bytes options:MTLResourceStorageModeShared];
-        id<MTLBuffer> bufferOut = [device newBufferWithLength:buffer_size_bytes options:MTLResourceStorageModeShared];
-
-        id<MTLCommandQueue> queue = [device newCommandQueue];
-        id<MTLCommandBuffer> cmdbuf = [queue commandBuffer];
-        id<MTLComputeCommandEncoder> encoder = [cmdbuf computeCommandEncoder];
-
-        [encoder setComputePipelineState:pso];
-        [encoder setBuffer:bufferIn offset:0 atIndex:0];
-        [encoder setBuffer:bufferOut offset:0 atIndex:1];
-
-        MTLSize gridSize = MTLSizeMake(element_count, 1, 1);
-        MTLSize threadGroupSize = MTLSizeMake(element_count, 1, 1);
-        [encoder dispatchThreads:gridSize threadsPerThreadgroup:threadGroupSize];
-        [encoder endEncoding];
-
-        [cmdbuf commit];
-        [cmdbuf waitUntilCompleted];
-
-        float* results = (float*)bufferOut.contents;
-        bool success = true;
-        for (int elem_idx = 0; elem_idx < element_count; ++elem_idx) {
-            float expected = inputData[elem_idx] * 2.0f;
-            bool result_matches = results[elem_idx] == expected;
-            if (!result_matches) {
-                std::cout << "Mismatch at " << elem_idx << ": got " << results[elem_idx] << " expected " << expected << std::endl;
-                success = false;
-            }
-        }
-
-        if (success) {
-            std::cout << "SUCCESS: Metal kernel executed correctly!" << std::endl; 
-        } else {
-             std::cout << "FAILURE: Results mismatch." << std::endl;
-             return 1;
-        }
-    }
-    return 0;
-}
-"""
-
-
-def main():
-    """full pipeline: xdsl -> llvm ir -> metal air -> gpu execution"""
-    target_os_version = assert_system_requirements()
-    print(f"Target OS Triple Suffix: {target_os_version}")
-
-    print("Generating xDSL module...")
+if __name__ == "__main__":
     xdsl_module = create_xdsl_module()
-
-    print("Converting xDSL to LLVM IR...")
     ir_printer = LLVMIRPrinter()
     llvm_ir_str = ir_printer.print_module(xdsl_module)
-    print("--- Generated LLVM IR ---")
     print(llvm_ir_str)
-    print("-------------------------")
-
-    print("Forging AIR...")
-    air_forge = AIRForge()
-    air_forge.triple = f"air64_v27-apple-{target_os_version}"
-    air_llvm_ir_str = air_forge.process(llvm_ir_str)
-
-    forged_ll_path = "demo_forged.ll"
-    with open(forged_ll_path, "w") as f:
-        f.write(air_llvm_ir_str)
-
-    preview_line_count = 20
-    print("--- Forged AIR LLVM IR ---")
-    print("\n".join(air_llvm_ir_str.splitlines()[:preview_line_count]) + "\n... (truncated)")
-    print("--------------------------")
-
-    print("Compiling to metallib...")
-    air_path = "demo.air"
-    metallib_path = "demo.metallib"
-    run_command(f"xcrun -sdk macosx metal -c {forged_ll_path} -o {air_path}")
-    run_command(f"xcrun -sdk macosx metallib {air_path} -o {metallib_path}")
-
-    print("Compiling runner...")
-    runner_source_path = "runner.mm"
-    runner_binary_path = "runner"
-    with open(runner_source_path, "w") as f:
-        f.write(RUNNER_SOURCE)
-
-    run_command(f"clang++ -framework Metal -framework Foundation {runner_source_path} -o {runner_binary_path}")
-
-    print("Executing runner...")
-    runner_output = run_command(f"./{runner_binary_path}", shell=False)
-
-    # cleanup temporary files to avoid polluting workspace
-    temp_files = [runner_binary_path, runner_source_path, air_path, metallib_path, forged_ll_path]
-    for temp_path in temp_files:
-        run_command(f"rm {temp_path}")
-
-    print(runner_output)
-
-
-if __name__ == "__main__":
-    main()
