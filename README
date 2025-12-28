@@ -1,3 +1,13 @@
+TODO:
+
+- minimize the gen_llvm stuff to bare minimum
+- improve the llvm_to_air.py
+- write a bunch of different test cases for llvm_to_air.py (hand written ll files)
+- design language on top of xdsl
+
+
+
+
 my own gpu language (xdsl module) -> llvm ir (xdsl lowering) -> air (the llvm_to_air.py script) -> metallib
 
 https://forum.modular.com/t/apple-silicon-gpu-support-in-mojo/2295
