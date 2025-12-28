@@ -1,5 +1,6 @@
 #!/bin/bash
 set -e
+
 echo "Forging AIR..."
 python3 air_forge.py tests/input.ll > tests/test.ll
 xcrun -sdk macosx metal -c tests/test.ll -o tests/test.air
