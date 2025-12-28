@@ -1,7 +1,4 @@
-# LLVM to Metal AIR Bridge
-
-> "Wait, it's all just LLVM IR?" 
-> "Always has been."
+# LLVM to Apple Intermediate Representation (AIR)
 
 This repo contains a proof-of-concept compiler backend that translates **standard, device-agnostic LLVM IR** into **Apple Metal AIR** (`.metallib`), completely bypassing Apple's proprietary Metal Language frontend.
 
