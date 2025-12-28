@@ -6,9 +6,11 @@
 # ///
 
 from __future__ import print_function
+
+from ctypes import CFUNCTYPE, c_double
+
 import llvmlite.binding as llvm
 import llvmlite.ir as ir
-from ctypes import CFUNCTYPE, c_double
 
 llvm.initialize_native_target()
 llvm.initialize_native_asmprinter()
@@ -35,7 +37,7 @@ builder.ret(builder.fadd(a, b, name="res"))
 # call_res = builder.call(func, [ir.Constant(double_type, 1.0), ir.Constant(double_type, 2.0)])
 # builder.ret(builder.fptoui(call_res, ir.IntType(32))) # cast to int, return as exit code
 
-print(module) # $ uv run ./demo.py | lli; echo $?
+print(module)  # $ uv run ./demo.py | lli; echo $?
 
 
 def create_execution_engine():

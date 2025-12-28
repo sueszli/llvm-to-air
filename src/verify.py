@@ -1,10 +1,6 @@
 # /// script
-# dependencies = [
-#     "pyobjc-framework-Metal",
-#     "pyobjc-framework-Cocoa",
-# ]
+# dependencies = [ "pyobjc-framework-Metal", "pyobjc-framework-Cocoa" ]
 # ///
-
 import ctypes
 from pathlib import Path
 
