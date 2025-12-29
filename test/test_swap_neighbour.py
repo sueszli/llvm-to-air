@@ -1,7 +1,24 @@
 import pytest
 from utils import compile_to_metallib, run_kernel
 
-# local swap adjacent elements with shared memory
+# kernel void test_kernel(
+#    device const float* in_ptr [[buffer(0)]],         // pointer to input in global memory
+#    device float* out_ptr [[buffer(1)]],              // pointer to output in global memory 
+#    uint global_id [[thread_position_in_grid]],       // thread across the entire execution grid
+#    uint local_id [[thread_position_in_threadgroup]], // thread within the threadgroup
+#    threadgroup float* shared_ptr [[threadgroup(0)]]  // pointer to shared memory within the threadgroup
+# ) {
+#     float val_in = in_ptr[global_id];
+#     shared_ptr[local_id] = val_in;
+#
+#     threadgroup_barrier(mem_flags::mem_threadgroup); // wait until all threads have stored their values
+# 
+#     uint neighbor_id = local_id ^ 1;                 // neighbor_id = local_id XOR 1 (swaps 0 and 1)
+# 
+#     float val_neighbor = shared_ptr[neighbor_id];    // swap values
+#     out_ptr[global_id] = val_neighbor;
+# }
+
 LLVM_IR = """
 declare void @"barrier"()
 
