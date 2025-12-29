@@ -3,7 +3,7 @@ from utils import compile_to_metallib, run_kernel
 
 # kernel void test_kernel(
 #    device const float* in_ptr [[buffer(0)]],         // pointer to input in global memory
-#    device float* out_ptr [[buffer(1)]],              // pointer to output in global memory 
+#    device float* out_ptr [[buffer(1)]],              // pointer to output in global memory
 #    uint global_id [[thread_position_in_grid]],       // thread across the entire execution grid
 #    uint local_id [[thread_position_in_threadgroup]], // thread within the threadgroup
 #    threadgroup float* shared_ptr [[threadgroup(0)]]  // pointer to shared memory within the threadgroup
@@ -12,10 +12,12 @@ from utils import compile_to_metallib, run_kernel
 #     shared_ptr[local_id] = val_in;
 #
 #     threadgroup_barrier(mem_flags::mem_threadgroup); // wait until all threads have stored their values
-# 
-#     uint neighbor_id = local_id ^ 1;                 // neighbor_id = local_id XOR 1 (swaps 0 and 1)
-# 
-#     float val_neighbor = shared_ptr[neighbor_id];    // swap values
+#
+#     // if (id % 2 == 0) { neighbor = id + 1 } else { neighbor = id - 1 }
+#     uint neighbor_id = local_id ^ 1;
+#
+#     // swap
+#     float val_neighbor = shared_ptr[neighbor_id];
 #     out_ptr[global_id] = val_neighbor;
 # }
 
