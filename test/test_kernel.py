@@ -4,13 +4,12 @@
 import ctypes
 import os
 import tempfile
-from pathlib import Path
 
 import Foundation
 import Metal
 import pytest
+from utils import compile_to_metallib
 
-from src.llvm_to_air import to_air
 
 LLVM_IR = """
 target triple = "arm64-apple-darwin24.6.0"
@@ -39,23 +38,6 @@ entry:
 """
 
 
-# Helper to compile LLVM IR string to Metallib bytes
-def compile_to_metallib(llvm_ir: str) -> bytes:
-    air_llvm_text = to_air(llvm_ir)
-    with tempfile.NamedTemporaryFile(suffix=".ll") as f_ll, tempfile.NamedTemporaryFile(suffix=".air") as f_air, tempfile.NamedTemporaryFile(suffix=".metallib") as f_lib:
-
-        f_ll.write(air_llvm_text.encode("utf-8"))
-        f_ll.flush()
-
-        cmd = f"xcrun -sdk macosx metal -x ir -c {f_ll.name} -o {f_air.name} && xcrun -sdk macosx metallib {f_air.name} -o {f_lib.name}"
-        ret = os.system(cmd)
-        if ret != 0:
-            raise RuntimeError("Compilation failed")
-
-        return Path(f_lib.name).read_bytes()
-
-
-# Compilation fixture - run once per session if possible, or per module
 @pytest.fixture(scope="module")
 def metallib_binary():
     return compile_to_metallib(LLVM_IR)
@@ -66,9 +48,6 @@ def run_kernel(metallib_binary: bytes, input_data: list[float]) -> list[float]:
     device = Metal.MTLCreateSystemDefaultDevice()
     if not device:
         pytest.skip("Metal not supported on this device")
-
-    import os
-    import tempfile
 
     with tempfile.NamedTemporaryFile(suffix=".metallib", delete=False) as tmp:
         tmp.write(metallib_binary)
