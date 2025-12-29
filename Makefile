@@ -18,4 +18,6 @@ venv:
 
 .PHONY: up
 up:
-	make fmt && make test && git add . && git commit -m up && git push
+	make fmt
+	make test
+	git add . && git commit -m up && git push
