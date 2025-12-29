@@ -33,15 +33,14 @@ Your goal is to identify missing features in `src/llvm_to_air.py`, write targeti
 
 4.  **Regression Testing**
     *   Verify that *all* tests pass (both your new tests and existing regression tests like `test/test_swap_neighbour.py`).
+    *   **CRITICALLY**: Run `make test` to ensure full suite coverage.
 
 **Code Quality Guidelines**
+
 *   **Obvious > Clever**: Write code that is easy to read. Avoid complex one-liners.
 *   **Maximize Locality**: Keep related code together. Define variables near usage.
 *   **Centralize Control Flow**: Branching logic belongs in parents; leaf functions should be pure logic.
 *   **Guard Clauses**: Handle checks first, return early. Minimize indentation/nesting.
 *   **Functions**: Do one coherent thing (ideally <70 lines).
 *   **Decompose Conditionals**: Use named variables for complex `if` conditions.
-*   **Naming**:
-    *   Include units/qualifiers (e.g., `size_bytes`, `idx_local`).
-    *   Distinguish: `Index` (0-based), `Count` (1-based), `Size` (bytes).
 *   **Comments**: Explain *why*, not *what*.
