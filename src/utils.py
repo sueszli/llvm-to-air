@@ -34,6 +34,6 @@ def get_type_info(type_str: str) -> Tuple[str, int, int]:
         return ("char", 1, 1)
 
 
-AIR_TO_LLVM_TYPES = {"f32": "float", "f64": "double", "i32": "i32", "i16": "i16", "i8": "i8", "i64": "i64"}
+AIR_TO_LLVM_TYPES = {"f32": "float", "f64": "double", "i32": "i32", "i16": "i16", "i8": "i8", "i64": "i64",}
 
-LLVM_TO_AIR_TYPES = {"float": "f32", "double": "f64", "i32": "i32", "i16": "i16", "i8": "i8", "i64": "i64"}
+LLVM_TO_AIR_TYPES = {"float": "f32", "double": "f64", "i32": "i32", "i16": "i16", "i8": "i8", "i64": "i64",}
