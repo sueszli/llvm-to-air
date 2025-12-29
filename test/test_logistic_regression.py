@@ -1,9 +1,17 @@
 import ctypes
 import math
+import sys
+from pathlib import Path
 
 import Metal
 import pytest
-from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib
+
+root_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root_dir))
+
+from utils import llvm_to_metallib
+
+from src.air_to_metallib import create_compute_pipeline, execute_kernel
 
 # logistic regression forward pass: y = sigmoid(w * x + b)
 # sigmoid(z) = 1 / (1 + exp(-z))
@@ -40,7 +48,7 @@ entry:
 
 
 def run_logistic_forward(binary, x, w, b):
-    device, pso = _create_compute_pipeline(binary, "logistic_forward")
+    device, pso = create_compute_pipeline(binary, "logistic_forward")
 
     def create_buffer(data):
         raw_array = (ctypes.c_float * len(data))(*data)
@@ -60,7 +68,7 @@ def run_logistic_forward(binary, x, w, b):
     grid_size = Metal.MTLSize(len(x), 1, 1)
     threadgroup_size = Metal.MTLSize(1, 1, 1)
 
-    _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
+    execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
     output_ptr = buf_y.contents()
     output_buffer = output_ptr.as_buffer(len(x) * 4)
@@ -70,7 +78,7 @@ def run_logistic_forward(binary, x, w, b):
 
 @pytest.fixture(scope="module")
 def binary_logistic_forward():
-    return compile_to_metallib(LLVM_IR_LOGISTIC_FORWARD)
+    return llvm_to_metallib(LLVM_IR_LOGISTIC_FORWARD)
 
 
 def sigmoid(z):
@@ -160,7 +168,7 @@ entry:
 
 
 def run_bce_loss(binary, y_pred, y_true):
-    device, pso = _create_compute_pipeline(binary, "bce_loss")
+    device, pso = create_compute_pipeline(binary, "bce_loss")
 
     def create_buffer(data):
         raw_array = (ctypes.c_float * len(data))(*data)
@@ -178,7 +186,7 @@ def run_bce_loss(binary, y_pred, y_true):
     grid_size = Metal.MTLSize(len(y_pred), 1, 1)
     threadgroup_size = Metal.MTLSize(1, 1, 1)
 
-    _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
+    execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
     output_ptr = buf_output.contents()
     output_buffer = output_ptr.as_buffer(len(y_pred) * 4)
@@ -188,7 +196,7 @@ def run_bce_loss(binary, y_pred, y_true):
 
 @pytest.fixture(scope="module")
 def binary_bce_loss():
-    return compile_to_metallib(LLVM_IR_BCE_LOSS)
+    return llvm_to_metallib(LLVM_IR_BCE_LOSS)
 
 
 def bce(y_true, y_pred):
@@ -267,7 +275,7 @@ entry:
 
 
 def run_logistic_gradient(binary, x, y_pred, y_true):
-    device, pso = _create_compute_pipeline(binary, "logistic_gradient")
+    device, pso = create_compute_pipeline(binary, "logistic_gradient")
 
     def create_buffer(data):
         raw_array = (ctypes.c_float * len(data))(*data)
@@ -289,7 +297,7 @@ def run_logistic_gradient(binary, x, y_pred, y_true):
     grid_size = Metal.MTLSize(len(x), 1, 1)
     threadgroup_size = Metal.MTLSize(1, 1, 1)
 
-    _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
+    execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
     grad_w_ptr = buf_grad_w.contents()
     grad_w_buffer = grad_w_ptr.as_buffer(len(x) * 4)
@@ -307,7 +315,7 @@ def run_logistic_gradient(binary, x, y_pred, y_true):
 
 @pytest.fixture(scope="module")
 def binary_logistic_gradient():
-    return compile_to_metallib(LLVM_IR_LOGISTIC_GRADIENT)
+    return llvm_to_metallib(LLVM_IR_LOGISTIC_GRADIENT)
 
 
 def test_logistic_gradient_perfect_predictions(binary_logistic_gradient):

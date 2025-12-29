@@ -1,4 +1,4 @@
-from utils import compile_to_metallib
+from utils import llvm_to_metallib
 
 from src.llvm_to_air import to_air
 
@@ -90,7 +90,7 @@ def test_multiple_address_spaces():
     air_ir = to_air(LLVM_IR_MULTI_ADDRSPACE)
     assert "addrspace(1)" in air_ir
     assert "addrspace(3)" in air_ir
-    binary = compile_to_metallib(LLVM_IR_MULTI_ADDRSPACE)
+    binary = llvm_to_metallib(LLVM_IR_MULTI_ADDRSPACE)
     assert binary is not None
 
 

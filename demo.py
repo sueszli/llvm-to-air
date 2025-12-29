@@ -24,10 +24,7 @@ from xdsl.dialects.builtin import Block, FloatAttr, FunctionType, IntegerAttr, M
 
 # Add src and test dirs to path to import utils and llvm_to_air
 root_dir = Path(__file__).resolve().parent
-sys.path.insert(0, str(root_dir))
-sys.path.insert(0, str(root_dir / "test"))
-
-from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib
+from src.air_to_metallib import compile_to_metallib, create_compute_pipeline, execute_kernel
 
 SOURCE = """
 (print
@@ -180,7 +177,10 @@ class Compiler:
         cmd_trans = ["mlir-translate", "--mlir-to-llvmir"]
         trans_proc = subprocess.run(cmd_trans, input=opt_proc.stdout, capture_output=True, text=True, check=True)
 
-        self.matmul_binary = compile_to_metallib(trans_proc.stdout, kernel_overrides={"matmul": {"6": "global_id"}})
+        from src.llvm_to_air import to_air
+
+        air_llvm_text = to_air(trans_proc.stdout, kernel_overrides={"matmul": {"6": "global_id"}})
+        self.matmul_binary = compile_to_metallib(air_llvm_text)
         return self.matmul_binary
 
     def run(self, tree: Lark):
@@ -208,7 +208,7 @@ class Compiler:
         M, K, K_rhs, N = A["rows"], A["cols"], B["rows"], B["cols"]
         assert K == K_rhs, f"Dimension mismatch: {M}x{K} @ {K_rhs}x{N}"
 
-        device, pso = _create_compute_pipeline(self.compile_matmul_kernel(), "matmul")
+        device, pso = create_compute_pipeline(self.compile_matmul_kernel(), "matmul")
         # print(f"Running on Metal Device: {device.name()}")
 
         buf_a = self._create_metal_buffer(device, A["data"])
@@ -223,7 +223,7 @@ class Compiler:
             for i, val in enumerate([m_bytes, n_bytes, k_bytes]):
                 encoder.setBytes_length_atIndex_(val, 4, 3 + i)
 
-        _execute_kernel(device, pso, Metal.MTLSize(M * N, 1, 1), Metal.MTLSize(1, 1, 1), encode_args)
+        execute_kernel(device, pso, Metal.MTLSize(M * N, 1, 1), Metal.MTLSize(1, 1, 1), encode_args)
 
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}

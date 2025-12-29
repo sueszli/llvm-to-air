@@ -1,9 +1,17 @@
 import ctypes
 import struct
+import sys
+from pathlib import Path
 
 import Metal
 import pytest
-from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib
+
+root_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root_dir))
+
+from utils import llvm_to_metallib
+
+from src.air_to_metallib import create_compute_pipeline, execute_kernel
 
 LLVM_IR_LINEAR_FORWARD = """
 define void @linear_forward(float* %x, float* %w, float* %b, float* %y, i32 %global_id) {
@@ -31,7 +39,7 @@ entry:
 
 
 def run_linear_forward(binary, x, w, b):
-    device, pso = _create_compute_pipeline(binary, "linear_forward")
+    device, pso = create_compute_pipeline(binary, "linear_forward")
 
     def create_buffer(data):
         raw_array = (ctypes.c_float * len(data))(*data)
@@ -51,7 +59,7 @@ def run_linear_forward(binary, x, w, b):
     grid_size = Metal.MTLSize(len(x), 1, 1)
     threadgroup_size = Metal.MTLSize(1, 1, 1)
 
-    _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
+    execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
     output_ptr = buf_y.contents()
     output_buffer = output_ptr.as_buffer(len(x) * 4)
@@ -61,7 +69,7 @@ def run_linear_forward(binary, x, w, b):
 
 @pytest.fixture(scope="module")
 def binary_linear_forward():
-    return compile_to_metallib(LLVM_IR_LINEAR_FORWARD)
+    return llvm_to_metallib(LLVM_IR_LINEAR_FORWARD)
 
 
 def test_linear_forward_simple(binary_linear_forward):
@@ -127,7 +135,7 @@ entry:
 
 
 def run_linear_gradient(binary, x, y_pred, y_true, n):
-    device, pso = _create_compute_pipeline(binary, "linear_gradient")
+    device, pso = create_compute_pipeline(binary, "linear_gradient")
 
     def create_buffer(data):
         raw_array = (ctypes.c_float * len(data))(*data)
@@ -152,7 +160,7 @@ def run_linear_gradient(binary, x, y_pred, y_true, n):
     grid_size = Metal.MTLSize(len(x), 1, 1)
     threadgroup_size = Metal.MTLSize(1, 1, 1)
 
-    _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
+    execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
     grad_w_ptr = buf_grad_w.contents()
     grad_w_buffer = grad_w_ptr.as_buffer(len(x) * 4)
@@ -170,7 +178,7 @@ def run_linear_gradient(binary, x, y_pred, y_true, n):
 
 @pytest.fixture(scope="module")
 def binary_linear_gradient():
-    return compile_to_metallib(LLVM_IR_LINEAR_GRADIENT)
+    return llvm_to_metallib(LLVM_IR_LINEAR_GRADIENT)
 
 
 def test_linear_gradient_perfect_fit(binary_linear_gradient):

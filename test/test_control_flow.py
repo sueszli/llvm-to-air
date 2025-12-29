@@ -1,5 +1,5 @@
 import pytest
-from utils import compile_to_metallib, run_kernel_1d_float
+from utils import llvm_to_metallib, run_kernel_1d_float
 
 #
 # tests translation of 'br', 'label', and 'phi'.
@@ -39,7 +39,7 @@ end:
 
 @pytest.fixture(scope="module")
 def binary_control_flow():
-    return compile_to_metallib(LLVM_IR)
+    return llvm_to_metallib(LLVM_IR)
 
 
 def test_control_flow(binary_control_flow):
@@ -89,7 +89,7 @@ end:
 
 @pytest.fixture(scope="module")
 def binary_nested():
-    return compile_to_metallib(LLVM_IR_NESTED)
+    return llvm_to_metallib(LLVM_IR_NESTED)
 
 
 def test_nested_branch(binary_nested):

@@ -1,5 +1,5 @@
 import pytest
-from utils import compile_to_metallib, run_kernel_1d_int
+from utils import llvm_to_metallib, run_kernel_1d_int
 
 LLVM_IR_LOOP = """
 define void @loop_kernel(i32* %in, i32* %out, i32 %id) {
@@ -27,7 +27,7 @@ exit:
 
 @pytest.fixture(scope="module")
 def binary_loop():
-    return compile_to_metallib(LLVM_IR_LOOP)
+    return llvm_to_metallib(LLVM_IR_LOOP)
 
 
 def test_loop_sum(binary_loop):

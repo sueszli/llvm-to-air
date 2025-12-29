@@ -1,7 +1,7 @@
 import math
 
 import pytest
-from utils import compile_to_metallib, run_kernel_1d_float
+from utils import llvm_to_metallib, run_kernel_1d_float
 
 #
 # out[i] = in[i] * 2.0 + 1.0
@@ -25,7 +25,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_arithmetic():
-    return compile_to_metallib(LLVM_IR_ARITHMETIC)
+    return llvm_to_metallib(LLVM_IR_ARITHMETIC)
 
 
 def test_arithmetic(binary_arithmetic):
@@ -56,7 +56,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_add():
-    return compile_to_metallib(LLVM_IR_ADD)
+    return llvm_to_metallib(LLVM_IR_ADD)
 
 
 def test_add(binary_add):
@@ -85,7 +85,7 @@ define void @add_index(float* %a, float* %b, i32 %id) {
 
 @pytest.fixture(scope="module")
 def binary_add_index():
-    return compile_to_metallib(LLVM_IR_ADD_INDEX)
+    return llvm_to_metallib(LLVM_IR_ADD_INDEX)
 
 
 def test_large_grid_execution(binary_add_index):
@@ -116,7 +116,7 @@ define void @sub_kernel(float* %a, float* %b, i32 %id) {
 
 @pytest.fixture(scope="module")
 def binary_sub():
-    return compile_to_metallib(LLVM_IR_SUB)
+    return llvm_to_metallib(LLVM_IR_SUB)
 
 
 def test_sub(binary_sub):
@@ -153,7 +153,7 @@ define void @tensor_ops(float* %a, float* %b, i32 %id) {
 
 @pytest.fixture(scope="module")
 def binary_tensor_ops():
-    return compile_to_metallib(LLVM_IR_TENSOR_OPS)
+    return llvm_to_metallib(LLVM_IR_TENSOR_OPS)
 
 
 def test_div_exp(binary_tensor_ops):
@@ -178,7 +178,7 @@ define void @frem_kernel(float* %a, float* %b, i32 %id) {
 
 @pytest.fixture(scope="module")
 def binary_frem():
-    return compile_to_metallib(LLVM_IR_FREM)
+    return llvm_to_metallib(LLVM_IR_FREM)
 
 
 def test_frem(binary_frem):
@@ -206,7 +206,7 @@ define void @rsqrt_kernel(float* %a, float* %b, i32 %id) {
 
 @pytest.fixture(scope="module")
 def binary_rsqrt():
-    return compile_to_metallib(LLVM_IR_RSQRT)
+    return llvm_to_metallib(LLVM_IR_RSQRT)
 
 
 def test_rsqrt(binary_rsqrt):

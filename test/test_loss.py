@@ -1,9 +1,17 @@
 import ctypes
 import math
+import sys
+from pathlib import Path
 
 import Metal
 import pytest
-from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib
+
+root_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root_dir))
+
+from utils import llvm_to_metallib
+
+from src.air_to_metallib import create_compute_pipeline, execute_kernel
 
 # cross-entropy loss: loss = -sum(y_true * log(y_pred))
 LLVM_IR_CROSS_ENTROPY = """
@@ -79,11 +87,11 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_cross_entropy():
-    return compile_to_metallib(LLVM_IR_CROSS_ENTROPY)
+    return llvm_to_metallib(LLVM_IR_CROSS_ENTROPY)
 
 
 def run_loss_function(binary, y_pred, y_true, kernel_name):
-    device, pso = _create_compute_pipeline(binary, kernel_name)
+    device, pso = create_compute_pipeline(binary, kernel_name)
 
     def create_buffer(data):
         raw_array = (ctypes.c_float * len(data))(*data)
@@ -102,7 +110,7 @@ def run_loss_function(binary, y_pred, y_true, kernel_name):
     grid_size = Metal.MTLSize(len(y_pred), 1, 1)
     threadgroup_size = Metal.MTLSize(1, 1, 1)
 
-    _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
+    execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
     output_ptr = buf_output.contents()
     output_buffer = output_ptr.as_buffer(len(y_pred) * 4)
@@ -219,7 +227,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_mse():
-    return compile_to_metallib(LLVM_IR_MSE)
+    return llvm_to_metallib(LLVM_IR_MSE)
 
 
 def test_mse_perfect_prediction(binary_mse):

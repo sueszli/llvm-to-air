@@ -1,5 +1,5 @@
 import pytest
-from utils import compile_to_metallib, run_kernel_1d_float
+from utils import llvm_to_metallib, run_kernel_1d_float
 
 #
 # out[i] = in[i]
@@ -18,7 +18,7 @@ define void @vec_copy(<4 x float>* %a, <4 x float>* %b, i32 %id) {
 
 @pytest.fixture(scope="module")
 def binary_vec_copy():
-    return compile_to_metallib(LLVM_IR_VEC_COPY)
+    return llvm_to_metallib(LLVM_IR_VEC_COPY)
 
 
 def test_vector_float4(binary_vec_copy):

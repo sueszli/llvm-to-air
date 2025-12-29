@@ -1,5 +1,5 @@
 import pytest
-from utils import compile_to_metallib, run_kernel_1d_float
+from utils import llvm_to_metallib, run_kernel_1d_float
 
 LLVM_IR = """
 define void @test_kernel(float* %in_ptr, float* %out_ptr, i32 %global_id, i32 %local_id, float* %my_group_ptr) 
@@ -22,7 +22,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_fragility():
-    return compile_to_metallib(LLVM_IR)
+    return llvm_to_metallib(LLVM_IR)
 
 
 def test_naming_fragility(binary_fragility):

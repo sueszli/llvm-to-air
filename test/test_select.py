@@ -1,5 +1,5 @@
 import pytest
-from utils import compile_to_metallib, run_kernel_1d_float
+from utils import llvm_to_metallib, run_kernel_1d_float
 
 #
 # out[i] = (i%2==0) ? in[i] : in[i+1] (safe if we make input large enough)
@@ -33,7 +33,7 @@ define void @select_ptr_single(float* %in, float* %out, i32 %id) {
 
 @pytest.fixture(scope="module")
 def binary_select_ptr_single():
-    return compile_to_metallib(LLVM_IR_SELECT_PTR_SINGLE)
+    return llvm_to_metallib(LLVM_IR_SELECT_PTR_SINGLE)
 
 
 def test_select_ptr_single(binary_select_ptr_single):

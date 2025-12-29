@@ -1,7 +1,7 @@
 import math
 
 import pytest
-from utils import compile_to_metallib, run_kernel_1d_float
+from utils import llvm_to_metallib, run_kernel_1d_float
 
 # relu: out[i] = max(0.0, in[i])
 LLVM_IR_RELU = """
@@ -21,7 +21,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_relu():
-    return compile_to_metallib(LLVM_IR_RELU)
+    return llvm_to_metallib(LLVM_IR_RELU)
 
 
 def test_relu(binary_relu):
@@ -49,7 +49,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_relu_max():
-    return compile_to_metallib(LLVM_IR_RELU_MAX)
+    return llvm_to_metallib(LLVM_IR_RELU_MAX)
 
 
 def test_relu_max(binary_relu_max):
@@ -90,7 +90,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_sigmoid():
-    return compile_to_metallib(LLVM_IR_SIGMOID)
+    return llvm_to_metallib(LLVM_IR_SIGMOID)
 
 
 def test_sigmoid(binary_sigmoid):
@@ -117,7 +117,7 @@ define void @tanh_kernel(float* %a, float* %b, i32 %id) {
 
 @pytest.fixture(scope="module")
 def binary_tanh():
-    return compile_to_metallib(LLVM_IR_TANH)
+    return llvm_to_metallib(LLVM_IR_TANH)
 
 
 def test_tanh(binary_tanh):

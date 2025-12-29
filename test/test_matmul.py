@@ -1,9 +1,17 @@
 import ctypes
 import struct
+import sys
+from pathlib import Path
 
 import Metal
 import pytest
-from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib, run_kernel_1d_float
+
+root_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root_dir))
+
+from utils import llvm_to_metallib, run_kernel_1d_float
+
+from src.air_to_metallib import create_compute_pipeline, execute_kernel
 
 LLVM_IR_MATMUL = """
 define void @matmul(float* %A, float* %B, float* %C, i32 %M, i32 %N, i32 %K, i32 %global_id) {
@@ -56,7 +64,7 @@ loop_exit:
 
 
 def run_matmul(binary, A, B, M, N, K):
-    device, pso = _create_compute_pipeline(binary, "matmul")
+    device, pso = create_compute_pipeline(binary, "matmul")
 
     def create_buffer(data):
         raw_array = (ctypes.c_float * len(data))(*data)
@@ -81,7 +89,7 @@ def run_matmul(binary, A, B, M, N, K):
     grid_size = Metal.MTLSize(M * N, 1, 1)
     threadgroup_size = Metal.MTLSize(1, 1, 1)  # Simple execution
 
-    _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
+    execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
     output_ptr = buf_c.contents()
     output_buffer = output_ptr.as_buffer(M * N * 4)
@@ -91,7 +99,7 @@ def run_matmul(binary, A, B, M, N, K):
 
 @pytest.fixture(scope="module")
 def binary_matmul():
-    return compile_to_metallib(LLVM_IR_MATMUL)
+    return llvm_to_metallib(LLVM_IR_MATMUL)
 
 
 def test_matmul_2x2(binary_matmul):
@@ -141,7 +149,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_simple_matmul():
-    return compile_to_metallib(LLVM_IR_SIMPLE_MATMUL)
+    return llvm_to_metallib(LLVM_IR_SIMPLE_MATMUL)
 
 
 def test_simple_matmul(binary_simple_matmul):

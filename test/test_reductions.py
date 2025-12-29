@@ -1,5 +1,5 @@
 import pytest
-from utils import compile_to_metallib, run_kernel_1d_float
+from utils import llvm_to_metallib, run_kernel_1d_float
 
 LLVM_IR_UITOFP_TEST = """
 define void @uitofp_test(float* %input, float* %output, i32 %id) {
@@ -27,7 +27,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_uitofp_test():
-    return compile_to_metallib(LLVM_IR_UITOFP_TEST)
+    return llvm_to_metallib(LLVM_IR_UITOFP_TEST)
 
 
 def test_uitofp_conversion(binary_uitofp_test):
@@ -67,7 +67,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_sitofp_test():
-    return compile_to_metallib(LLVM_IR_SITOFP_TEST)
+    return llvm_to_metallib(LLVM_IR_SITOFP_TEST)
 
 
 def test_sitofp_conversion(binary_sitofp_test):
@@ -105,7 +105,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_fptoui_test():
-    return compile_to_metallib(LLVM_IR_FPTOUI_TEST)
+    return llvm_to_metallib(LLVM_IR_FPTOUI_TEST)
 
 
 def test_fptoui_conversion(binary_fptoui_test):

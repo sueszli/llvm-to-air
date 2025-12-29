@@ -1,8 +1,16 @@
 import ctypes
+import sys
+from pathlib import Path
 
 import Metal
 import pytest
-from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib
+
+root_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root_dir))
+
+from utils import llvm_to_metallib
+
+from src.air_to_metallib import create_compute_pipeline, execute_kernel
 
 # params[i] -= learning_rate * gradients[i]
 LLVM_IR_SGD_BASIC = """
@@ -28,7 +36,7 @@ entry:
 
 
 def run_sgd_basic(binary, params, gradients, learning_rate):
-    device, pso = _create_compute_pipeline(binary, "sgd_basic")
+    device, pso = create_compute_pipeline(binary, "sgd_basic")
 
     def create_buffer(data):
         raw_array = (ctypes.c_float * len(data))(*data)
@@ -49,7 +57,7 @@ def run_sgd_basic(binary, params, gradients, learning_rate):
     grid_size = Metal.MTLSize(len(params), 1, 1)
     threadgroup_size = Metal.MTLSize(1, 1, 1)
 
-    _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
+    execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
     # read back updated parameters
     output_ptr = buf_params.contents()
@@ -60,7 +68,7 @@ def run_sgd_basic(binary, params, gradients, learning_rate):
 
 @pytest.fixture(scope="module")
 def binary_sgd_basic():
-    return compile_to_metallib(LLVM_IR_SGD_BASIC)
+    return llvm_to_metallib(LLVM_IR_SGD_BASIC)
 
 
 def test_sgd_basic_simple(binary_sgd_basic):
@@ -138,7 +146,7 @@ entry:
 
 
 def run_sgd_momentum(binary, params, gradients, velocity, learning_rate, momentum):
-    device, pso = _create_compute_pipeline(binary, "sgd_momentum")
+    device, pso = create_compute_pipeline(binary, "sgd_momentum")
 
     def create_buffer(data):
         raw_array = (ctypes.c_float * len(data))(*data)
@@ -163,7 +171,7 @@ def run_sgd_momentum(binary, params, gradients, velocity, learning_rate, momentu
     grid_size = Metal.MTLSize(len(params), 1, 1)
     threadgroup_size = Metal.MTLSize(1, 1, 1)
 
-    _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
+    execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
     params_ptr = buf_params.contents()
     params_buffer = params_ptr.as_buffer(len(params) * 4)
@@ -178,7 +186,7 @@ def run_sgd_momentum(binary, params, gradients, velocity, learning_rate, momentu
 
 @pytest.fixture(scope="module")
 def binary_sgd_momentum():
-    return compile_to_metallib(LLVM_IR_SGD_MOMENTUM)
+    return llvm_to_metallib(LLVM_IR_SGD_MOMENTUM)
 
 
 def test_sgd_momentum_simple(binary_sgd_momentum):
@@ -250,7 +258,7 @@ entry:
 
 
 def run_sgd_weight_decay(binary, params, gradients, learning_rate, weight_decay):
-    device, pso = _create_compute_pipeline(binary, "sgd_weight_decay")
+    device, pso = create_compute_pipeline(binary, "sgd_weight_decay")
 
     def create_buffer(data):
         raw_array = (ctypes.c_float * len(data))(*data)
@@ -273,7 +281,7 @@ def run_sgd_weight_decay(binary, params, gradients, learning_rate, weight_decay)
     grid_size = Metal.MTLSize(len(params), 1, 1)
     threadgroup_size = Metal.MTLSize(1, 1, 1)
 
-    _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
+    execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
     output_ptr = buf_params.contents()
     output_buffer = output_ptr.as_buffer(len(params) * 4)
@@ -283,7 +291,7 @@ def run_sgd_weight_decay(binary, params, gradients, learning_rate, weight_decay)
 
 @pytest.fixture(scope="module")
 def binary_sgd_weight_decay():
-    return compile_to_metallib(LLVM_IR_SGD_WEIGHT_DECAY)
+    return llvm_to_metallib(LLVM_IR_SGD_WEIGHT_DECAY)
 
 
 def test_sgd_weight_decay_simple(binary_sgd_weight_decay):

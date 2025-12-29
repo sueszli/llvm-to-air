@@ -1,8 +1,16 @@
 import ctypes
+import sys
+from pathlib import Path
 
 import Metal
 import pytest
-from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib
+
+root_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root_dir))
+
+from utils import llvm_to_metallib
+
+from src.air_to_metallib import create_compute_pipeline, execute_kernel
 
 # 2D Convolution: out[y,x] = sum over kernel of input[y+ky, x+kx] * kernel[ky, kx]
 # simplified version: 3x3 input, 2x2 kernel, no padding, stride=1
@@ -97,7 +105,7 @@ entry:
 
 
 def run_conv2d(binary, input_img, kernel, output_size):
-    device, pso = _create_compute_pipeline(binary, "conv2d")
+    device, pso = create_compute_pipeline(binary, "conv2d")
 
     def create_buffer(data):
         raw_array = (ctypes.c_float * len(data))(*data)
@@ -115,7 +123,7 @@ def run_conv2d(binary, input_img, kernel, output_size):
     grid_size = Metal.MTLSize(output_size, 1, 1)
     threadgroup_size = Metal.MTLSize(1, 1, 1)
 
-    _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
+    execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
     output_ptr = buf_output.contents()
     output_buffer = output_ptr.as_buffer(output_size * 4)
@@ -125,7 +133,7 @@ def run_conv2d(binary, input_img, kernel, output_size):
 
 @pytest.fixture(scope="module")
 def binary_conv2d():
-    return compile_to_metallib(LLVM_IR_CONV2D)
+    return llvm_to_metallib(LLVM_IR_CONV2D)
 
 
 def test_conv2d_identity(binary_conv2d):

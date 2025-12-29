@@ -527,5 +527,7 @@ class AirTranslator:
 
 
 def to_air(llvm_ir_text: str, kernel_overrides: Dict[str, Dict[str, str]] = None) -> str:
+    # kernel_overrides is used to rename kernel arguments and assign them specific semantic meanings
+    # example: kernel_overrides = {"my_kernel": {"0": "gid"}} ensures the first argument of "my_kernel" is identified as the grid position
     translator = AirTranslator(llvm_ir_text, kernel_overrides)
     return translator.translate()

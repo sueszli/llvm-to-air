@@ -1,5 +1,5 @@
 import pytest
-from utils import compile_to_metallib, run_kernel_1d_float
+from utils import llvm_to_metallib, run_kernel_1d_float
 
 # max pooling 2D: out[y,x] = max(input[2*y:2*y+2, 2*x:2*x+2])
 # input: 4x4, Pool size: 2x2, Stride: 2, Output: 2x2
@@ -79,7 +79,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_maxpool2d():
-    return compile_to_metallib(LLVM_IR_MAXPOOL2D)
+    return llvm_to_metallib(LLVM_IR_MAXPOOL2D)
 
 
 def test_maxpool2d_basic(binary_maxpool2d):
@@ -182,7 +182,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_avgpool2d():
-    return compile_to_metallib(LLVM_IR_AVGPOOL2D)
+    return llvm_to_metallib(LLVM_IR_AVGPOOL2D)
 
 
 def test_avgpool2d_basic(binary_avgpool2d):
@@ -276,7 +276,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_minpool2d():
-    return compile_to_metallib(LLVM_IR_MINPOOL2D)
+    return llvm_to_metallib(LLVM_IR_MINPOOL2D)
 
 
 def test_minpool2d(binary_minpool2d):

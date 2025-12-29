@@ -1,5 +1,5 @@
 import pytest
-from utils import compile_to_metallib, run_kernel_1d_float
+from utils import llvm_to_metallib, run_kernel_1d_float
 
 LLVM_IR_MIN_MAX = """
 declare float @llvm.minnum.f32(float, float)
@@ -23,7 +23,7 @@ define void @minmax_kernel(float* %a, float* %b, i32 %id) {
 
 @pytest.fixture(scope="module")
 def binary_minmax():
-    return compile_to_metallib(LLVM_IR_MIN_MAX)
+    return llvm_to_metallib(LLVM_IR_MIN_MAX)
 
 
 def test_minmax_clamp(binary_minmax):
@@ -56,7 +56,7 @@ define void @fma_kernel(float* %a, float* %b, i32 %id) {
 
 @pytest.fixture(scope="module")
 def binary_fma():
-    return compile_to_metallib(LLVM_IR_FMA)
+    return llvm_to_metallib(LLVM_IR_FMA)
 
 
 def test_fma(binary_fma):
@@ -87,7 +87,7 @@ define void @abs_kernel(float* %a, float* %b, i32 %id) {
 
 @pytest.fixture(scope="module")
 def binary_abs():
-    return compile_to_metallib(LLVM_IR_ABS)
+    return llvm_to_metallib(LLVM_IR_ABS)
 
 
 def test_abs(binary_abs):
@@ -117,7 +117,7 @@ define void @trunc_kernel(float* %a, float* %b, i32 %id) {
 
 @pytest.fixture(scope="module")
 def binary_trunc():
-    return compile_to_metallib(LLVM_IR_TRUNC)
+    return llvm_to_metallib(LLVM_IR_TRUNC)
 
 
 def test_trunc(binary_trunc):
@@ -147,7 +147,7 @@ define void @round_kernel(float* %a, float* %b, i32 %id) {
 
 @pytest.fixture(scope="module")
 def binary_round():
-    return compile_to_metallib(LLVM_IR_ROUND)
+    return llvm_to_metallib(LLVM_IR_ROUND)
 
 
 def test_round(binary_round):

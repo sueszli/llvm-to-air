@@ -1,7 +1,7 @@
 import math
 
 import pytest
-from utils import compile_to_metallib, run_kernel_1d_float
+from utils import llvm_to_metallib, run_kernel_1d_float
 
 # batch Normalization: out[i] = gamma * (x[i] - mean) / sqrt(var + eps) + beta
 # simplified: batch size = 4, single feature
@@ -77,7 +77,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_batchnorm():
-    return compile_to_metallib(LLVM_IR_BATCHNORM)
+    return llvm_to_metallib(LLVM_IR_BATCHNORM)
 
 
 def test_batchnorm_basic(binary_batchnorm):

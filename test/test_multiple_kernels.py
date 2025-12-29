@@ -1,5 +1,5 @@
 import pytest
-from utils import compile_to_metallib, run_kernel_1d_float
+from utils import llvm_to_metallib, run_kernel_1d_float
 
 LLVM_IR_MULTIPLE = """
 define void @kernel_add(float* %a, float* %b, i32 %id) {
@@ -26,7 +26,7 @@ define void @kernel_sub(float* %a, float* %b, i32 %id) {
 
 @pytest.fixture(scope="module")
 def binary_multiple():
-    return compile_to_metallib(LLVM_IR_MULTIPLE)
+    return llvm_to_metallib(LLVM_IR_MULTIPLE)
 
 
 def test_multiple_kernels(binary_multiple):

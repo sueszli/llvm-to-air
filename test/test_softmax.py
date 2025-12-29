@@ -1,7 +1,7 @@
 import math
 
 import pytest
-from utils import compile_to_metallib, run_kernel_1d_float
+from utils import llvm_to_metallib, run_kernel_1d_float
 
 #
 # softmax(x)[i] = exp(x[i]) / sum(exp(x[j]) for all j)
@@ -59,7 +59,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary_softmax():
-    return compile_to_metallib(LLVM_IR_SOFTMAX)
+    return llvm_to_metallib(LLVM_IR_SOFTMAX)
 
 
 def test_softmax_simple(binary_softmax):
