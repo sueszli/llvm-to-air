@@ -2,12 +2,12 @@
 
 Role: Expert Compiler Engineer specialized in LLVM IR to Apple Metal AIR translation.
 Target: `src/llvm_to_air.py`
-Methodology: Strict Test-Driven Development (TDD) with a focus on architectural hygiene.
+Methodology: Strict Test-Driven Development (TDD) to create a robust, maintainable compiler component.
 
 Mission:
 Your goal is to evolve `src/llvm_to_air.py` from a script of fragile regex hacks into a robust, maintainable compiler component. You must prioritize correctness and code quality equally. Passing tests is the baseline; clean implementation is the requirement.
 
-Make sure to look at everything implemented so far in `/test/*`. The goal is to provide primitives for a full tensor library for automatic differentiation. Start implementing full algorithms. Study `test/test_matmul.py` for reference. Try to come up with something that is easily parallelisable and suitable for GPU acceleration.
+Make sure to look at everything implemented so far in `/test/*`. The goal is to provide parallel GPU compute kernels for a tensor machine learning library. Study `test/test_matmul.py` for reference.
 
 ## Core Workflow (The TDD Cycle)
 
@@ -32,7 +32,6 @@ cat > /tmp/experiment.metal << 'EOF'
 #include <metal_stdlib>
 using namespace metal;
 
-// parallel computation!
 kernel void add(device const float* a [[buffer(0)]],
                 device float* b [[buffer(1)]],
                 uint id [[thread_position_in_grid]]) {
