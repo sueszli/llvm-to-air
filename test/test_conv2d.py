@@ -5,15 +5,14 @@ import pytest
 from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib
 
 # 2D Convolution: out[y,x] = sum over kernel of input[y+ky, x+kx] * kernel[ky, kx]
-# Simplified version: 3x3 input, 2x2 kernel, no padding, stride=1
-# Output will be 2x2
-
+# simplified version: 3x3 input, 2x2 kernel, no padding, stride=1
+# output will be 2x2
 LLVM_IR_CONV2D = """
 define void @conv2d(float* %input, float* %kernel, float* %output, i32 %global_id) {
 entry:
-  ; Input: 3x3 = 9 elements (row-major)
-  ; Kernel: 2x2 = 4 elements (row-major)
-  ; Output: 2x2 = 4 elements (row-major)
+  ; input: 3x3 = 9 elements (row-major)
+  ; kernel: 2x2 = 4 elements (row-major)
+  ; output: 2x2 = 4 elements (row-major)
   ; 
   ; global_id maps to output position:
   ;   id=0 -> out[0,0], id=1 -> out[0,1]
@@ -28,11 +27,11 @@ entry:
   %out_row = zext i32 %out_row_32 to i64
   %out_col = zext i32 %out_col_32 to i64
   
-  ; Convolution computation: sum over 2x2 kernel
+  ; convolution computation: sum over 2x2 kernel
   ; result = 0
   %sum_init = fadd float 0.0, 0.0
   
-  ; Kernel position [0, 0]
+  ; kernel position [0, 0]
   %in_y_0 = add i64 %out_row, 0
   %in_x_0 = add i64 %out_col, 0
   %in_idx_00 = mul i64 %in_y_0, 3  ; input_width = 3
@@ -46,7 +45,7 @@ entry:
   %prod_00 = fmul float %in_val_00, %k_val_00
   %sum_00 = fadd float %sum_init, %prod_00
   
-  ; Kernel position [0, 1]
+  ; kernel position [0, 1]
   %in_y_1 = add i64 %out_row, 0
   %in_x_1 = add i64 %out_col, 1
   %in_idx_01 = mul i64 %in_y_1, 3
@@ -60,7 +59,7 @@ entry:
   %prod_01 = fmul float %in_val_01, %k_val_01
   %sum_01 = fadd float %sum_00, %prod_01
   
-  ; Kernel position [1, 0]
+  ; kernel position [1, 0]
   %in_y_2 = add i64 %out_row, 1
   %in_x_2 = add i64 %out_col, 0
   %in_idx_10 = mul i64 %in_y_2, 3
@@ -74,7 +73,7 @@ entry:
   %prod_10 = fmul float %in_val_10, %k_val_10
   %sum_10 = fadd float %sum_01, %prod_10
   
-  ; Kernel position [1, 1]
+  ; kernel position [1, 1]
   %in_y_3 = add i64 %out_row, 1
   %in_x_3 = add i64 %out_col, 1
   %in_idx_11 = mul i64 %in_y_3, 3
@@ -88,7 +87,7 @@ entry:
   %prod_11 = fmul float %in_val_11, %k_val_11
   %sum_final = fadd float %sum_10, %prod_11
   
-  ; Store result
+  ; store result
   %out_ptr = getelementptr inbounds float, float* %output, i64 %idx
   store float %sum_final, float* %out_ptr
   
@@ -98,7 +97,6 @@ entry:
 
 
 def run_conv2d(binary, input_img, kernel, output_size):
-    """Run 2D convolution kernel with separate input and kernel buffers."""
     device, pso = _create_compute_pipeline(binary, "conv2d")
 
     def create_buffer(data):
@@ -131,19 +129,18 @@ def binary_conv2d():
 
 
 def test_conv2d_identity(binary_conv2d):
-    """Test 2D convolution with identity-like kernel."""
-    # Input: 3x3 matrix
+    # input: 3x3 matrix
     # [1, 2, 3]
     # [4, 5, 6]
     # [7, 8, 9]
     input_data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
 
-    # Kernel: 2x2 matrix (simple averaging kernel)
+    # kernel: 2x2 matrix (simple averaging kernel)
     # [0.25, 0.25]
     # [0.25, 0.25]
     kernel_data = [0.25, 0.25, 0.25, 0.25]
 
-    # Expected output: 2x2 matrix
+    # expected output: 2x2 matrix
     # out[0,0] = 0.25*(1+2+4+5) = 3.0
     # out[0,1] = 0.25*(2+3+5+6) = 4.0
     # out[1,0] = 0.25*(4+5+7+8) = 6.0
@@ -155,19 +152,18 @@ def test_conv2d_identity(binary_conv2d):
 
 
 def test_conv2d_edge_detection(binary_conv2d):
-    """Test 2D convolution with edge detection kernel."""
-    # Input: 3x3 matrix
+    # input: 3x3 matrix
     # [1, 1, 1]
     # [1, 1, 1]
     # [1, 1, 1]
     input_data = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 
-    # Kernel: 2x2 Sobel-like
+    # kernel: 2x2 Sobel-like
     # [1, -1]
     # [1, -1]
     kernel_data = [1.0, -1.0, 1.0, -1.0]
 
-    # Expected: all zeros (no edges in uniform image)
+    # expected: all zeros (no edges in uniform image)
     expected = [0.0, 0.0, 0.0, 0.0]
 
     result = run_conv2d(binary_conv2d, input_data, kernel_data, 4)
