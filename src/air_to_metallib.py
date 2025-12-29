@@ -15,6 +15,8 @@ import Metal
 
 def compile_to_metallib(air_llvm_ir: str) -> bytes:
     assert system("xcrun --version") == 0, "xcrun not found"
+    assert system("xcrun -sdk macosx metal --version") == 0, "metal not found"
+    assert system("xcrun -sdk macosx metallib --version") == 0, "metallib not found"
 
     assert air_llvm_ir
     with tempfile.NamedTemporaryFile(suffix=".ll") as f_ll, tempfile.NamedTemporaryFile(suffix=".air") as f_air, tempfile.NamedTemporaryFile(suffix=".metallib") as f_lib:
