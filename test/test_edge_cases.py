@@ -1,5 +1,6 @@
-from src.llvm_to_air import to_air
 from utils import compile_to_metallib
+
+from src.llvm_to_air import to_air
 
 LLVM_IR_EMPTY = """
 define void @empty_kernel(float* %a, float* %b, i32 %id) {

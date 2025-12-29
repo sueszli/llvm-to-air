@@ -3,7 +3,6 @@ import math
 
 import Metal
 import pytest
-
 from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib
 
 # cross-entropy loss: loss = -sum(y_true * log(y_pred))

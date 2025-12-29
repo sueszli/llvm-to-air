@@ -2,7 +2,6 @@ import ctypes
 
 import Metal
 import pytest
-
 from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib
 
 # params[i] -= learning_rate * gradients[i]

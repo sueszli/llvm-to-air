@@ -1,7 +1,6 @@
 import math
 
 import pytest
-
 from utils import compile_to_metallib, run_kernel_1d_float
 
 # Sigmoid: out[i] = 1.0 / (1.0 + exp(-in[i]))

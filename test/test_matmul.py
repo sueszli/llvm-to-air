@@ -3,7 +3,6 @@ import struct
 
 import Metal
 import pytest
-
 from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib, run_kernel_1d_float
 
 LLVM_IR_MATMUL = """

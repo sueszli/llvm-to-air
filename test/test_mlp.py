@@ -3,7 +3,6 @@ import math
 
 import Metal
 import pytest
-
 from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib
 
 LLVM_IR_MLP_FORWARD = """
