@@ -308,13 +308,14 @@ class SignatureParser:
             clean_name = a_name.strip()
             name_no_prefix = clean_name.replace("%", "").replace('"', "")
 
-            # Apply override if present
+            # apply override if present
             semantic_name = arg_map.get(name_no_prefix, name_no_prefix)
 
             res_type, is_output, sig_part = SignatureParser._process_single_argument(a_type, clean_name, semantic_name, var_addrspaces, scalar_loads)
 
             new_sig_parts.append(sig_part)
-            # Use semantic_name for args_list so metadata generator sees it
+
+            # use semantic_name for args_list so metadata generator sees it
             args_list.append((res_type, semantic_name, is_output))
 
         return args_list, new_sig_parts
