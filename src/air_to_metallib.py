@@ -16,7 +16,6 @@ import Metal
 def compile_to_metallib(air_llvm_ir: str) -> bytes:
     assert shutil.which("xcrun") is not None, "xcrun not found"
 
-    # Verify metal and metallib are available via xcrun
     metal_check = subprocess.run(["xcrun", "-sdk", "macosx", "metal", "--version"], capture_output=True)
     assert metal_check.returncode == 0, "metal not found"
 
