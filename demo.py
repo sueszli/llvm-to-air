@@ -9,12 +9,10 @@
 
 import ctypes
 import struct
-from pathlib import Path
 
 import Metal
 from lark import Lark
 
-Path(__file__).resolve().parent
 from src.air_to_metallib import create_compute_pipeline, execute_kernel
 from src.kernel_matmul import kernel_matmul_binary
 
