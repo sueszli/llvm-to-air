@@ -3,6 +3,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from typing import Callable
 
 import Foundation
 import Metal
@@ -29,29 +30,73 @@ def compile_to_metallib(llvm_ir: str) -> bytes:
         return lib_data
 
 
-def run_kernel(metallib_binary: bytes, input_data: list[float], kernel_name: str) -> list[float]:
-    assert len(metallib_binary) > 0, "metallib binary is empty"
-    assert len(input_data) > 0, "input data cannot be empty"
-    assert kernel_name, "kernel name cannot be empty"
+def _create_compute_pipeline(metallib_binary: bytes, kernel_name: str):
+    # setup Metal device, library, compute pipeline state
 
+    # initialize metal device
     device = Metal.MTLCreateSystemDefaultDevice()
     assert device, "metal not supported on this device"
 
+    # load library from bytes via temp file
     with tempfile.NamedTemporaryFile(suffix=".metallib", delete=False) as tmp:
         tmp.write(metallib_binary)
         tmp_path = tmp.name
 
-    lib_url = Foundation.NSURL.fileURLWithPath_(tmp_path)
-    library, error = device.newLibraryWithURL_error_(lib_url, None)
-    os.remove(tmp_path)
+    try:
+        lib_url = Foundation.NSURL.fileURLWithPath_(tmp_path)
+        library, error = device.newLibraryWithURL_error_(lib_url, None)
+        assert library, f"error loading library: {error}"
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
-    assert library, f"error loading library: {error}"
+    # get kernel function and create pipeline state
     fn = library.newFunctionWithName_(kernel_name)
     assert fn, f"function '{kernel_name}' not found."
 
     pso, error = device.newComputePipelineStateWithFunction_error_(fn, None)
     assert pso, f"error creating pipeline state: {error}"
 
+    return device, pso
+
+
+def _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args_fn: Callable[[any], None]):
+    # setup command queue and buffer
+    queue = device.newCommandQueue()
+    assert queue, "failed to create command queue"
+
+    cmd_buffer = queue.commandBuffer()
+    assert cmd_buffer, "failed to create command buffer"
+
+    # encode compute command
+    encoder = cmd_buffer.computeCommandEncoder()
+    assert encoder, "failed to create compute command encoder"
+
+    encoder.setComputePipelineState_(pso)
+
+    # call specific argument setup
+    encode_args_fn(encoder)
+
+    # dispatch threads
+    encoder.dispatchThreads_threadsPerThreadgroup_(grid_size, threadgroup_size)
+    encoder.endEncoding()
+
+    # execute and wait for completion
+    cmd_buffer.commit()
+    cmd_buffer.waitUntilCompleted()
+
+    status = cmd_buffer.status()
+    assert status == Metal.MTLCommandBufferStatusCompleted, f"command buffer failed with status {status} and error: {cmd_buffer.error()}"
+
+
+def run_kernel(metallib_binary: bytes, input_data: list[float], kernel_name: str) -> list[float]:
+    assert len(metallib_binary) > 0, "metallib binary is empty"
+    assert len(input_data) > 0, "input data cannot be empty"
+    assert kernel_name, "kernel name cannot be empty"
+
+    device, pso = _create_compute_pipeline(metallib_binary, kernel_name)
+
+    # prepare data and compute buffers
     thread_count_items = len(input_data)
     raw_data_array = (ctypes.c_float * thread_count_items)(*input_data)
     data_size_bytes = ctypes.sizeof(raw_data_array)
@@ -62,33 +107,17 @@ def run_kernel(metallib_binary: bytes, input_data: list[float], kernel_name: str
     buffer_out = device.newBufferWithLength_options_(data_size_bytes, Metal.MTLResourceStorageModeShared)
     assert buffer_out, "failed to create output buffer"
 
-    queue = device.newCommandQueue()
-    assert queue, "failed to create command queue"
-
-    cmd_buffer = queue.commandBuffer()
-    assert cmd_buffer, "failed to create command buffer"
-
-    encoder = cmd_buffer.computeCommandEncoder()
-    assert encoder, "failed to create compute command encoder"
-
-    encoder.setComputePipelineState_(pso)
-    encoder.setBuffer_offset_atIndex_(buffer_in, 0, 0)
-    encoder.setBuffer_offset_atIndex_(buffer_out, 0, 1)
-
-    encoder.setThreadgroupMemoryLength_atIndex_(data_size_bytes, 0)
+    def encode_args(encoder):
+        encoder.setBuffer_offset_atIndex_(buffer_in, 0, 0)
+        encoder.setBuffer_offset_atIndex_(buffer_out, 0, 1)
+        encoder.setThreadgroupMemoryLength_atIndex_(data_size_bytes, 0)
 
     grid_size = Metal.MTLSize(width=thread_count_items, height=1, depth=1)
     threadgroup_size = Metal.MTLSize(width=thread_count_items, height=1, depth=1)
 
-    encoder.dispatchThreads_threadsPerThreadgroup_(grid_size, threadgroup_size)
-    encoder.endEncoding()
+    _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
-    cmd_buffer.commit()
-    cmd_buffer.waitUntilCompleted()
-
-    status = cmd_buffer.status()
-    assert status == Metal.MTLCommandBufferStatusCompleted, f"command buffer failed with status {status} and error: {cmd_buffer.error()}"
-
+    # extract results from output buffer
     output_ptr = buffer_out.contents()
     output_buffer = output_ptr.as_buffer(data_size_bytes)
     results_view = memoryview(output_buffer).cast("f")
