@@ -58,11 +58,11 @@ class MetadataGenerator:
     def emit(kernels: List[Tuple[str, List[Tuple[str, str, bool]]]], used_intrinsics: Set[str]) -> List[str]:
         lines = ["\ndeclare void @air.wg.barrier(i32, i32) local_unnamed_addr #1"]
 
-        # intrinsics declarations
+        # intrinsics declarations (add signatures for built-in functions)
         for intr in sorted(used_intrinsics):
             lines.extend(MetadataGenerator._emit_intrinsic_decl(intr))
 
-        # attributes
+        # attributes (additional information for the compiler)
         lines.append('attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn "approx-func-fp-math"="true" "frame-pointer"="all" "min-legal-vector-width"="0" "no-builtins" "no-infs-fp-math"="true" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "unsafe-fp-math"="true" }')
         lines.append("attributes #1 = { convergent mustprogress nounwind willreturn }")
         lines.append("attributes #2 = { convergent nounwind willreturn }")
@@ -146,7 +146,7 @@ class MetadataGenerator:
             '!"air.compile.denorms_disable"',
             '!"air.compile.fast_math_enable"',
             '!"air.compile.framebuffer_fetch_enable"',
-            '!"Apple metal version 32023.830 (metalfe-32023.830.2)"',
+            '!"Apple metal version 32023.830 (metalfe-32023.830.2)"',  # TODO: can this be inferred?
         ]
 
         desc_refs = []
@@ -193,6 +193,7 @@ class MetadataGenerator:
 class IntrinsicHandler:
     @staticmethod
     def handle_type_casts(line: str, used_intrinsics: Set[str]) -> str:
+        # converts LLVM type casting instructions into AIR conversion intrinsics.
         conversions = [
             (r"(%\S+)\s*=\s*uitofp\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.f.{dst}.u.{src}"),
             (r"(%\S+)\s*=\s*sitofp\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.f.{dst}.s.{src}"),
@@ -218,6 +219,7 @@ class IntrinsicHandler:
 
     @staticmethod
     def replace_intrinsics(line: str, used_intrinsics: Set[str]) -> str:
+        # maps standard LLVM math functions to their AIR equivalents.
         if "call" not in line:
             return line
 
@@ -242,7 +244,7 @@ class IntrinsicHandler:
 class SignatureParser:
     @staticmethod
     def parse(lines: List[str], start_idx: int) -> Tuple[str, List[Tuple[str, str, bool]], str, int, Dict[str, int], Dict[str, str]]:
-        """Parses function signature and sets up argument tracking."""
+        # parses function signature and sets up argument tracking
         pkg, idx = SignatureParser._read_signature_lines(lines, start_idx)
 
         sig_match = re.search(r"define\s+void\s+@\"?([\w\.]+)\"?\s*\((.*?)\).*?{", pkg, re.DOTALL)
@@ -262,6 +264,7 @@ class SignatureParser:
 
     @staticmethod
     def _read_signature_lines(lines: List[str], start_idx: int) -> Tuple[str, int]:
+        # handles multi-line function signatures
         pkg = lines[start_idx]
         i = start_idx
         while "{" not in pkg:
@@ -271,6 +274,7 @@ class SignatureParser:
 
     @staticmethod
     def _process_arguments(raw_args: str, var_addrspaces: Dict[str, int], scalar_loads: Dict[str, str]) -> Tuple[List[Tuple[str, str, bool]], List[str]]:
+        # uses regex to parse the function name and the raw argument string from the define void @Name(...) pattern
         arg_chunks = [x.strip() for x in raw_args.split(",")] if raw_args.strip() else []
         new_sig_parts = []
         args_list = []
@@ -294,6 +298,7 @@ class SignatureParser:
 
     @staticmethod
     def _process_single_argument(a_type: str, clean_name: str, name_no_prefix: str, var_addrspaces: Dict[str, int], scalar_loads: Dict[str, str]) -> Tuple[str, bool, str]:
+        # iterates through the function arguments and transforms them based on whether they are buffers (pointers) or scalars (values)
         if "*" in a_type:
             return SignatureParser._process_buffer_argument(a_type, clean_name, var_addrspaces)
         return SignatureParser._process_scalar_argument(a_type, clean_name, name_no_prefix, var_addrspaces, scalar_loads)

@@ -1,8 +1,6 @@
-
 my own gpu language (xdsl module) -> llvm ir (xdsl lowering) -> air (the llvm_to_air.py script) -> metallib
 
 
 based on:
 
 https://forum.modular.com/t/apple-silicon-gpu-support-in-mojo/2295
-
