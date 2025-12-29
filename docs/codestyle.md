@@ -4,8 +4,6 @@
 - Guard Clauses: Handle checks first, return early, minimize nesting.
 - Functions: Do one coherent thing (ideally <70 lines). Prefer lambdas/inline logic over tiny single-use functions.
 - Decompose Conditionals: Use named variables to simplify complex `if` conditions.
-- Naming & Comments:
-    - Comments explain *why*, not *what*; use lowercase single lines. ASCII illustrations are welcome.
-- Paradigm Balance:
-    - Functional: Prefer pure functions (data in, data out) and immutability for logic.
-    - Procedural: Use direct loops and local mutation when simpler or significantly more performant.
+- Naming & Comments: Comments explain *why*, not *what*; use lowercase single lines. ASCII illustrations are welcome.
+- Functional: Prefer pure functions (data in, data out) and immutability for logic.
+- Procedural: Use direct loops and local mutation when simpler or significantly more performant.
