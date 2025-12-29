@@ -167,7 +167,7 @@ class AirTranslator:
             self.var_addrspaces[clean_name] = 0
             return a_type, False, f"{a_type} {clean_name}"
 
-        # regular scalar -> Constant Buffer conversion
+        # regular scalar -> constant buffer conversion
         base_type = a_type.strip()
         ptr_type = f"{base_type} addrspace(2)*"
         _, size, align = get_type_info(base_type)
