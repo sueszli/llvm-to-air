@@ -18,7 +18,7 @@ from src.kernel_matmul import kernel_matmul_binary
 
 SOURCE = """
 (print
-    (@
+    (matmul
         (tensor (2 3) (1.0 2.0 3.0 4.0 5.0 6.0))
         (tensor (3 2) (7.0 8.0 9.0 10.0 11.0 12.0))
     )
@@ -29,7 +29,7 @@ GRAMMAR = r"""
 start: expr*
 ?expr: tensor_expr | matmul_expr | print_expr
 tensor_expr: "(" "tensor" "(" NUMBER NUMBER ")" "(" NUMBER* ")" ")"
-matmul_expr: "(" "@" expr expr ")"
+matmul_expr: "(" "matmul" expr expr ")"
 print_expr: "(" "print" expr ")"
 NUMBER: /-?\d+(\.\d+)?/
 %import common.WS
