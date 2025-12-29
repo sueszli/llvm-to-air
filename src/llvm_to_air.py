@@ -1,5 +1,6 @@
 import platform
 import re
+import sys
 from typing import Dict, List, Set, Tuple
 
 AIR_TO_LLVM_TYPES = {
@@ -554,5 +555,7 @@ def to_air(llvm_ir_text: str, kernel_overrides: Dict[str, Dict[str, str]] = None
         the translator will correctly generate AIR metadata identifying argument 3 as the grid position
         and argument 2 as a writeable buffer.
     """
+    assert llvm_ir_text
+    assert sys.platform == "darwin"
     translator = AirTranslator(llvm_ir_text, kernel_overrides)
     return translator.translate()
