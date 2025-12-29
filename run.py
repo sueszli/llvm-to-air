@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 import Foundation
+import llvmlite.binding as llvm
 import llvmlite.ir as ir
 import Metal
 
@@ -15,23 +16,25 @@ import Metal
 
 
 def generate_llvm() -> str:
-    """Generates the LLVM IR for the test kernel using llvmlite."""
-    module = ir.Module(name="input.ll")
-    module.triple = "x86_64-unknown-linux-gnu"
+    llvm.initialize_native_target()
+    llvm.initialize_native_asmprinter()
+
+    module = ir.Module(name=__file__)
+    module.triple = llvm.get_process_triple()
     module.data_layout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 
-    # Type definitions (explicit naming)
+    # types
     f32_type = ir.FloatType()
     i32_type = ir.IntType(32)
     i64_type = ir.IntType(64)
     void_type = ir.VoidType()
     f32_ptr_type = f32_type.as_pointer()
 
-    # Function declarations
-    # barrier() is needed to synchronize threads in the threadgroup
+    # functions
+    # barrier() synchronizes threads in the threadgroup
     barrier_fn = ir.Function(module, ir.FunctionType(void_type, []), name="barrier")
 
-    # Kernel definition: void test_kernel(float* in, float* out, i32 id, i32 tid, float* shared)
+    # kernel definition: void test_kernel(float* in, float* out, i32 id, i32 tid, float* shared)
     kernel_ty = ir.FunctionType(void_type, [f32_ptr_type, f32_ptr_type, i32_type, i32_type, f32_ptr_type])
     kernel_fn = ir.Function(module, kernel_ty, name="test_kernel")
 
@@ -39,18 +42,18 @@ def generate_llvm() -> str:
     for arg, name in zip(kernel_fn.args, arg_names):
         arg.name = name
 
-    # Block construction
+    # block construction
     block = kernel_fn.append_basic_block(name="entry")
     builder = ir.IRBuilder(block)
 
     arg_in, arg_out, arg_global_id, arg_local_id, arg_shared = kernel_fn.args
 
-    # Logic: Exchange data with neighbor in shared memory
-    # 1. Load from global input -> Store to shared memory
-    # 2. Wait for all threads (barrier)
-    # 3. Load from shared memory (neighbor's slot) -> Store to global output
+    # logic: exchange data with neighbor in shared memory
+    # 1. load from global input -> store to shared memory
+    # 2. wait for all threads (barrier)
+    # 3. load from shared memory (neighbor's slot) -> store to global output
 
-    # Part 1: transfer to shared
+    # transfer to shared
     idx_global = builder.zext(arg_global_id, i64_type, name="idx_global")
     ptr_in = builder.gep(arg_in, [idx_global], name="ptr_in")
     val_in = builder.load(ptr_in, name="val_in")
@@ -59,10 +62,10 @@ def generate_llvm() -> str:
     ptr_shared = builder.gep(arg_shared, [idx_local], name="ptr_shared")
     builder.store(val_in, ptr_shared)
 
-    # Part 2: sync
+    # sync
     builder.call(barrier_fn, [])
 
-    # Part 3: read neighbor and store
+    # read neighbor and store
     # neighbor index = local_id XOR 1 (flip last bit)
     neighbor_id = builder.xor(arg_local_id, ir.Constant(i32_type, 1), name="neighbor_id")
     idx_neighbor = builder.zext(neighbor_id, i64_type, name="idx_neighbor")
@@ -74,7 +77,6 @@ def generate_llvm() -> str:
     builder.store(val_neighbor, ptr_out)
 
     builder.ret_void()
-
     return str(module)
 
 
@@ -82,11 +84,6 @@ def generate_llvm() -> str:
 
 
 def _get_metal_metadata() -> str:
-    """Returns the static metadata block required for Metal AIR."""
-    # This helper reduces noise in the main transformation function.
-    # We construct a strict set of metadata that matches what Metal expects.
-
-    # helper for concise metadata lines
     lines = []
     meta_id = 0
 
