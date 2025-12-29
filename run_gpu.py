@@ -110,16 +110,8 @@ def run_matmul(binary, A, B, M, N, K):
 
     buf_a = create_buffer(A)
     buf_b = create_buffer(B)
-    # Output size: M * N elements (flat)
+    # output: size: M * N elements (flat)
     buf_c = device.newBufferWithLength_options_(M * N * 4, Metal.MTLResourceStorageModeShared)
-
-    # Arguments: A, B, C, M, N, K, global_id (implicit in grid dispatch if not passed explicitly, but our kernel takes it as arg?
-    # Wait, the signature in gpu_gen is: (A, B, C, M, N, K, global_id).
-    # In AIR, global_id is usually a specialized argument, not a standard buffer/value passed by encoder.
-    # Looking at src/llvm_to_air.py, 'global_id' is detected and mapped to "air.thread_position_in_grid".
-    # So we don't encode it manually in setBytes or setBuffer. It is implicit.
-    # BUT we do need to pass M, N, K as scalar values.
-    # In test_matmul.py, they passed M, N, K as bytes.
 
     m_bytes = struct.pack("i", M)
     n_bytes = struct.pack("i", N)
@@ -149,7 +141,7 @@ def main():
     llvm_ir = run_gen()
 
     print("Compiling to metallib...")
-    binary = compile_to_metallib(llvm_ir)
+    binary = compile_to_metallib(llvm_ir, kernel_overrides={"matmul": {"6": "global_id"}})
 
     # Input Data from demo.py
     # A = tensor(2 3) (1.0 2.0 3.0 4.0 5.0 6.0)

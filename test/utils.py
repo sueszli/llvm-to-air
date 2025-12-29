@@ -15,9 +15,9 @@ sys.path.insert(0, str(root_dir))
 from src.llvm_to_air import to_air
 
 
-def compile_to_metallib(llvm_ir: str) -> bytes:
+def compile_to_metallib(llvm_ir: str, kernel_overrides: dict = None) -> bytes:
     assert llvm_ir, "llvm_ir cannot be empty"
-    air_llvm_text = to_air(llvm_ir)
+    air_llvm_text = to_air(llvm_ir, kernel_overrides)
     assert air_llvm_text, "AIR LLVM generation returned empty text"
 
     with tempfile.NamedTemporaryFile(suffix=".ll") as f_ll, tempfile.NamedTemporaryFile(suffix=".air") as f_air, tempfile.NamedTemporaryFile(suffix=".metallib") as f_lib:

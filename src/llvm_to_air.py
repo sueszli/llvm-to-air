@@ -178,7 +178,7 @@ class MetadataGenerator:
     @staticmethod
     def _get_air_metadata_content(arg_type: str, arg_name: str, is_output: bool) -> Tuple[str, int]:
         # id / grid position
-        if arg_name in ["id", "gid", "global_id", "6"]:
+        if arg_name in ["id", "gid", "global_id"]:
             return ('!"air.thread_position_in_grid", !"air.arg_type_name", !"uint"', 0)
         if arg_name in ["tid", "lid", "local_id"]:
             return ('!"air.thread_position_in_threadgroup", !"air.arg_type_name", !"uint"', 0)
@@ -256,7 +256,7 @@ class IntrinsicHandler:
 
 class SignatureParser:
     @staticmethod
-    def parse(lines: List[str], start_idx: int) -> Tuple[str, List[Tuple[str, str, bool]], str, int, Dict[str, int], Dict[str, str]]:
+    def parse(lines: List[str], start_idx: int, kernel_overrides: Dict[str, Dict[str, str]] = None) -> Tuple[str, List[Tuple[str, str, bool]], str, int, Dict[str, int], Dict[str, str]]:
         # parses function signature and sets up argument tracking
         pkg, idx = SignatureParser._read_signature_lines(lines, start_idx)
 
@@ -266,10 +266,14 @@ class SignatureParser:
         func_name = sig_match.group(1).replace('"', "")
         raw_args = sig_match.group(2)
 
+        arg_map = {}
+        if kernel_overrides and func_name in kernel_overrides:
+            arg_map = kernel_overrides[func_name]
+
         var_addrspaces: Dict[str, int] = {}
         scalar_loads: Dict[str, str] = {}
 
-        args_list, new_sig_parts = SignatureParser._process_arguments(raw_args, var_addrspaces, scalar_loads)
+        args_list, new_sig_parts = SignatureParser._process_arguments(raw_args, var_addrspaces, scalar_loads, arg_map)
 
         air_sig = f'define void @{func_name}({", ".join(new_sig_parts)}) #0 {{'
         return func_name, args_list, air_sig, idx + 1, var_addrspaces, scalar_loads
@@ -285,11 +289,14 @@ class SignatureParser:
         return pkg, i
 
     @staticmethod
-    def _process_arguments(raw_args: str, var_addrspaces: Dict[str, int], scalar_loads: Dict[str, str]) -> Tuple[List[Tuple[str, str, bool]], List[str]]:
+    def _process_arguments(raw_args: str, var_addrspaces: Dict[str, int], scalar_loads: Dict[str, str], arg_map: Dict[str, str] = None) -> Tuple[List[Tuple[str, str, bool]], List[str]]:
         # uses regex to parse the function name and the raw argument string from the define void @Name(...) pattern
         arg_chunks = [x.strip() for x in raw_args.split(",")] if raw_args.strip() else []
         new_sig_parts = []
         args_list = []
+
+        if arg_map is None:
+            arg_map = {}
 
         for arg_chunk in arg_chunks:
             if not arg_chunk:
@@ -301,10 +308,14 @@ class SignatureParser:
             clean_name = a_name.strip()
             name_no_prefix = clean_name.replace("%", "").replace('"', "")
 
-            res_type, is_output, sig_part = SignatureParser._process_single_argument(a_type, clean_name, name_no_prefix, var_addrspaces, scalar_loads)
+            # Apply override if present
+            semantic_name = arg_map.get(name_no_prefix, name_no_prefix)
+
+            res_type, is_output, sig_part = SignatureParser._process_single_argument(a_type, clean_name, semantic_name, var_addrspaces, scalar_loads)
 
             new_sig_parts.append(sig_part)
-            args_list.append((res_type, name_no_prefix, is_output))
+            # Use semantic_name for args_list so metadata generator sees it
+            args_list.append((res_type, semantic_name, is_output))
 
         return args_list, new_sig_parts
 
@@ -334,7 +345,7 @@ class SignatureParser:
     @staticmethod
     def _process_scalar_argument(a_type: str, clean_name: str, name_no_prefix: str, var_addrspaces: Dict[str, int], scalar_loads: Dict[str, str]) -> Tuple[str, bool, str]:
         # thread ID checks
-        if name_no_prefix in ["id", "gid", "global_id", "tid", "lid", "local_id", "6"]:
+        if name_no_prefix in ["id", "gid", "global_id", "tid", "lid", "local_id"]:
             var_addrspaces[clean_name] = 0
             return a_type, False, f"{a_type} {clean_name}"
 
@@ -352,10 +363,11 @@ class SignatureParser:
 
 
 class AirTranslator:
-    def __init__(self, llvm_ir: str):
+    def __init__(self, llvm_ir: str, kernel_overrides: Dict[str, Dict[str, str]] = None):
         self.lines = llvm_ir.splitlines()
         self.output_lines: List[str] = []
         self.kernels: List[Tuple[str, List[Tuple[str, str, bool]]]] = []
+        self.kernel_overrides = kernel_overrides
 
         # per-function state
         self.var_addrspaces: Dict[str, int] = {}
@@ -394,7 +406,7 @@ class AirTranslator:
         self.var_addrspaces = {}
         self.scalar_loads = {}
 
-        func_name, args_list, air_sig, idx, self.var_addrspaces, self.scalar_loads = SignatureParser.parse(self.lines, start_idx)
+        func_name, args_list, air_sig, idx, self.var_addrspaces, self.scalar_loads = SignatureParser.parse(self.lines, start_idx, self.kernel_overrides)
         self.kernels.append((func_name, args_list))
         self.output_lines.append(air_sig)
 
@@ -513,6 +525,6 @@ class AirTranslator:
         return line
 
 
-def to_air(llvm_ir_text: str) -> str:
-    translator = AirTranslator(llvm_ir_text)
+def to_air(llvm_ir_text: str, kernel_overrides: Dict[str, Dict[str, str]] = None) -> str:
+    translator = AirTranslator(llvm_ir_text, kernel_overrides)
     return translator.translate()
