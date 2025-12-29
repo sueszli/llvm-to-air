@@ -89,8 +89,8 @@ def _gen_kernel_matmul() -> ModuleOp:
     return module
 
 
-def fix_mlir(mlir_text):
-    # Fix entry block args format from xdsl output to what mlir-opt expects
+def _fix_mlir(mlir_text):
+    # fix entry block args format from xdsl output to what mlir-opt expects
     match = re.search(r"\^bb0\((.*)\):", mlir_text)
     if not match:
         return mlir_text
@@ -114,7 +114,7 @@ def fix_mlir(mlir_text):
 def kernel_matmul_binary():
     buf = StringIO()
     Printer(stream=buf).print_op(_gen_kernel_matmul())
-    mlir_source = fix_mlir(buf.getvalue())
+    mlir_source = _fix_mlir(buf.getvalue())
 
     cmd_opt = [
         "mlir-opt",
