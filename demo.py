@@ -1,19 +1,33 @@
-# $ uv run ./demo.py | mlir-opt --convert-scf-to-cf --convert-func-to-llvm --convert-arith-to-llvm --convert-cf-to-llvm --reconcile-unrealized-casts | mlir-translate --mlir-to-llvmir | lli
+# $ uv run ./demo.py
 #
 # /// script
 # dependencies = [
 #     "lark",
 #     "xdsl",
+#     "pyobjc-framework-Metal",
+#     "pyobjc-framework-Cocoa",
 # ]
 # ///
 
+import ctypes
+import re
+import struct
+import subprocess
+import sys
+from pathlib import Path
+
+import Metal
 from lark import Lark
 from xdsl.builder import Builder, InsertPoint
-from xdsl.dialects import arith, builtin, func, llvm, scf
-from xdsl.dialects.builtin import ArrayAttr, DenseArrayBase, FloatAttr, FunctionType, IntegerAttr, ModuleOp, StringAttr
-from xdsl.dialects.builtin import SymbolRefAttr as SymbolAttr
-from xdsl.dialects.builtin import f64, i32, i64
-from xdsl.ir import Block, Region
+from xdsl.dialects import arith, func, llvm, scf
+from xdsl.dialects.builtin import Block, FloatAttr, FunctionType, IntegerAttr, ModuleOp, f32, i32, i64
+
+# Add src and test dirs to path to import utils and llvm_to_air
+root_dir = Path(__file__).resolve().parent
+sys.path.insert(0, str(root_dir))
+sys.path.insert(0, str(root_dir / "test"))
+
+from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib
 
 SOURCE = """
 (print
@@ -36,253 +50,247 @@ NUMBER: /-?\d+(\.\d+)?/
 """
 
 
-class IRGen:
+class MatmulKernelGen:
+    """Generates the generic Matmul kernel in xDSL/MLIR."""
+
     def __init__(self):
         self.module = ModuleOp([])
         self.builder = Builder(InsertPoint.at_end(self.module.body.blocks[0]))
-        # cache for string globals
-        self.str_cache = {}
-        self.str_cnt = 0
 
-        # libc declarations
-        self._declare_external_funcs()
+    def gen(self) -> ModuleOp:
+        # Define function signature: void matmul(float* A, float* B, float* C, i32 M, i32 N, i32 K, i32 global_id)
+        args = [
+            llvm.LLVMPointerType(),  # A
+            llvm.LLVMPointerType(),  # B
+            llvm.LLVMPointerType(),  # C
+            i32,  # M
+            i32,  # N
+            i32,  # K
+            i32,  # global_id
+        ]
 
-    def _declare_external_funcs(self):
-        # void* malloc(size_t)
-        self.builder.insert(llvm.FuncOp("malloc", llvm.LLVMFunctionType([i64], llvm.LLVMPointerType()), linkage=llvm.LinkageAttr("external")))
-        # int printf(char*, ...)
-        self.builder.insert(llvm.FuncOp("printf", llvm.LLVMFunctionType([llvm.LLVMPointerType()], i32, is_variadic=True), linkage=llvm.LinkageAttr("external")))
+        func_type = FunctionType.from_lists(args, [])
+        matmul_func = func.FuncOp("matmul", func_type)
+        self.module.body.blocks[0].add_op(matmul_func)
 
-    def gen(self, tree: Lark) -> ModuleOp:
-        # entry block for main function, with i32 return type
-        entry_block = Block()
-        main_func = func.FuncOp("main", FunctionType.from_lists([], [i32]), Region(entry_block))
-        self.module.body.blocks[0].add_op(main_func)
+        # Function body
+        entry_block = Block(arg_types=args)
+        matmul_func.body.add_block(entry_block)
 
-        # enter main function scope
-        prev_builder = self.builder
         self.builder = Builder(InsertPoint.at_end(entry_block))
 
-        # iter through each op
-        for expr in tree.children:
-            self._gen_expr(expr)
+        # Get arguments
+        arg_A = entry_block.args[0]
+        arg_B = entry_block.args[1]
+        arg_C = entry_block.args[2]
+        arg_M = entry_block.args[3]
+        arg_N = entry_block.args[4]
+        arg_K = entry_block.args[5]
+        arg_id = entry_block.args[6]
 
-        # return 0 from main
-        zero_const = self.builder.insert(arith.ConstantOp(IntegerAttr(0, i32))).results[0]
-        self.builder.insert(func.ReturnOp(zero_const))
+        id_i64 = self.builder.insert(arith.ExtUIOp(arg_id, i64)).results[0]
+        N_i64 = self.builder.insert(arith.ExtUIOp(arg_N, i64)).results[0]
+        K_i64 = self.builder.insert(arith.ExtUIOp(arg_K, i64)).results[0]
 
-        # restore builder, leave main function scope
-        self.builder = prev_builder
+        # row = id / N
+        row = self.builder.insert(arith.DivUIOp(arg_id, arg_N)).results[0]
+        row_i64 = self.builder.insert(arith.ExtUIOp(row, i64)).results[0]
 
-        return self.module
+        # col = id % N
+        col = self.builder.insert(arith.RemUIOp(arg_id, arg_N)).results[0]
+        col_i64 = self.builder.insert(arith.ExtUIOp(col, i64)).results[0]
 
-    def _gen_expr(self, node):
-        if node.data == "tensor_expr":
-            rows = int(node.children[0])
-            cols = int(node.children[1])
-            data = [float(val) for val in node.children[2:]]
-            assert len(data) == rows * cols, "data length mismatch with shape"
-            return self._create_tensor(rows, cols, data)
+        # In a real generic kernel, we should check bounds here, but skipping for demo simplicity
+        # if (id >= M * N) return;
 
-        if node.data == "matmul_expr":
-            lhs = self._gen_expr(node.children[0])  # recurse
-            rhs = self._gen_expr(node.children[1])
-            return self._matmul(lhs, rhs)
-
-        if node.data == "print_expr":
-            val = self._gen_expr(node.children[0])
-            self._print_tensor(val)
-            return None
-
-    def _create_tensor(self, rows: int, cols: int, data: list[float] | None):
-        # struct { double* ptr; int rows; int cols; }
-        struct_type = llvm.LLVMStructType.from_type_list([llvm.LLVMPointerType(), i32, i32])
-
-        # create constants
-        c_rows = self.builder.insert(arith.ConstantOp(IntegerAttr(rows, i32))).results[0]
-        c_cols = self.builder.insert(arith.ConstantOp(IntegerAttr(cols, i32))).results[0]
-        c_size = self.builder.insert(arith.ConstantOp(IntegerAttr(rows * cols, i32))).results[0]
-        c_elem_size = self.builder.insert(arith.ConstantOp(IntegerAttr(8, i32))).results[0]  # sizeof(double)
-
-        # calculate bytes = rows * cols * 8
-        c_total_bytes_32 = self.builder.insert(arith.MuliOp(c_size, c_elem_size)).results[0]
-        c_total_bytes = self.builder.insert(arith.ExtUIOp(c_total_bytes_32, i64)).results[0]  # malloc takes i64
-
-        # call malloc
-        ptr = self.builder.insert(llvm.CallOp(SymbolAttr("malloc"), c_total_bytes, return_type=llvm.LLVMPointerType())).results[0]
-
-        # populate data if provided
-        if data:
-            for i, val in enumerate(data):
-                c_idx = self.builder.insert(arith.ConstantOp(IntegerAttr(i, i32))).results[0]
-                c_val = self.builder.insert(arith.ConstantOp(FloatAttr(val, f64))).results[0]
-                # gep = base + idx
-                gep = self.builder.insert(llvm.GEPOp(ptr, [llvm.GEP_USE_SSA_VAL], f64, ssa_indices=[c_idx])).results[0]
-                self.builder.insert(llvm.StoreOp(c_val, gep))
-
-        # create struct on stack (or undefined value and insert)
-        struct_type = llvm.LLVMStructType.from_type_list([llvm.LLVMPointerType(), i32, i32])
-        struct_val = self.builder.insert(llvm.UndefOp(struct_type)).results[0]
-        struct_val = self.builder.insert(llvm.InsertValueOp(DenseArrayBase.from_list(i64, [0]), struct_val, ptr)).results[0]
-        struct_val = self.builder.insert(llvm.InsertValueOp(DenseArrayBase.from_list(i64, [1]), struct_val, c_rows)).results[0]
-        struct_val = self.builder.insert(llvm.InsertValueOp(DenseArrayBase.from_list(i64, [2]), struct_val, c_cols)).results[0]
-
-        return struct_val
-
-    def _matmul(self, lhs, rhs):
-        # extract dims
-        lhs_ptr = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [0]), lhs, llvm.LLVMPointerType())).results[0]
-        lhs_rows = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [1]), lhs, i32)).results[0]
-        lhs_cols = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [2]), lhs, i32)).results[0]
-
-        rhs_ptr = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [0]), rhs, llvm.LLVMPointerType())).results[0]
-        rhs_rows = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [1]), rhs, i32)).results[0]
-        rhs_cols = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [2]), rhs, i32)).results[0]
-
-        size = self.builder.insert(arith.MuliOp(lhs_rows, rhs_cols)).results[0]
-        c_8 = self.builder.insert(arith.ConstantOp(IntegerAttr(8, i32))).results[0]
-        bytes_32 = self.builder.insert(arith.MuliOp(size, c_8)).results[0]
-        bytes_64 = self.builder.insert(arith.ExtUIOp(bytes_32, i64)).results[0]
-
-        # allocate result tensor
-        res_ptr = self.builder.insert(llvm.CallOp(SymbolAttr("malloc"), bytes_64, return_type=llvm.LLVMPointerType())).results[0]
-
-        # constants for loop bounds
+        # Loop k from 0 to K
         c0 = self.builder.insert(arith.ConstantOp(IntegerAttr(0, i32))).results[0]
         c1 = self.builder.insert(arith.ConstantOp(IntegerAttr(1, i32))).results[0]
+        c0_f = self.builder.insert(arith.ConstantOp(FloatAttr(0.0, f32))).results[0]
 
-        # create outer loop (i) from 0 to lhs_rows
-        loop_i = self.builder.insert(scf.ForOp(c0, lhs_rows, c1, [], [Block(arg_types=[i32])]))
-        b_i = Builder(InsertPoint.at_end(loop_i.body.blocks[0]))
-        i = loop_i.body.blocks[0].args[0]
+        loop_k = self.builder.insert(scf.ForOp(c0, arg_K, c1, [c0_f], [Block(arg_types=[i32, f32])]))
 
-        # create inner loop (j) from 0 to rhs_cols
-        loop_j = b_i.insert(scf.ForOp(c0, rhs_cols, c1, [], [Block(arg_types=[i32])]))
-        b_j = Builder(InsertPoint.at_end(loop_j.body.blocks[0]))
-        j = loop_j.body.blocks[0].args[0]
-
-        # init accumulation sum to 0.0
-        c0_f = b_j.insert(arith.ConstantOp(FloatAttr(0.0, f64))).results[0]
-
-        # create k loop from 0 to lhs_cols with sum reduction
-        loop_k = b_j.insert(scf.ForOp(c0, lhs_cols, c1, [c0_f], [Block(arg_types=[i32, f64])]))
         b_k = Builder(InsertPoint.at_end(loop_k.body.blocks[0]))
         k = loop_k.body.blocks[0].args[0]
         curr_sum = loop_k.body.blocks[0].args[1]
 
-        # calc lhs index: i * lhs_cols + k
-        idx_lhs_temp = b_k.insert(arith.MuliOp(i, lhs_cols)).results[0]
-        idx_lhs = b_k.insert(arith.AddiOp(idx_lhs_temp, k)).results[0]
-        lhs_elem_ptr = b_k.insert(llvm.GEPOp(lhs_ptr, [llvm.GEP_USE_SSA_VAL], f64, ssa_indices=[idx_lhs])).results[0]
-        lhs_val = b_k.insert(llvm.LoadOp(lhs_elem_ptr, f64)).results[0]
+        k_i64 = b_k.insert(arith.ExtUIOp(k, i64)).results[0]
 
-        # calc rhs index: k * rhs_cols + j
-        idx_rhs_temp = b_k.insert(arith.MuliOp(k, rhs_cols)).results[0]
-        idx_rhs = b_k.insert(arith.AddiOp(idx_rhs_temp, j)).results[0]
-        rhs_elem_ptr = b_k.insert(llvm.GEPOp(rhs_ptr, [llvm.GEP_USE_SSA_VAL], f64, ssa_indices=[idx_rhs])).results[0]
-        rhs_val = b_k.insert(llvm.LoadOp(rhs_elem_ptr, f64)).results[0]
+        # A[row * K + k]
+        idx_A_temp = b_k.insert(arith.MuliOp(row_i64, K_i64)).results[0]
+        idx_A = b_k.insert(arith.AddiOp(idx_A_temp, k_i64)).results[0]
+        ptr_A = b_k.insert(llvm.GEPOp(arg_A, [llvm.GEP_USE_SSA_VAL], f32, ssa_indices=[idx_A])).results[0]
+        val_A = b_k.insert(llvm.LoadOp(ptr_A, f32)).results[0]
 
-        # compute product and accumulate
-        mul = b_k.insert(arith.MulfOp(lhs_val, rhs_val)).results[0]
-        new_sum = b_k.insert(arith.AddfOp(curr_sum, mul)).results[0]
+        # B[k * N + col]
+        idx_B_temp = b_k.insert(arith.MuliOp(k_i64, N_i64)).results[0]
+        idx_B = b_k.insert(arith.AddiOp(idx_B_temp, col_i64)).results[0]
+        ptr_B = b_k.insert(llvm.GEPOp(arg_B, [llvm.GEP_USE_SSA_VAL], f32, ssa_indices=[idx_B])).results[0]
+        val_B = b_k.insert(llvm.LoadOp(ptr_B, f32)).results[0]
 
-        # yield new sum for next iteration
+        prod = b_k.insert(arith.MulfOp(val_A, val_B)).results[0]
+        new_sum = b_k.insert(arith.AddfOp(curr_sum, prod)).results[0]
+
         b_k.insert(scf.YieldOp(new_sum))
 
-        # get final sum from reduction
         final_sum = loop_k.results[0]
 
-        # calc res index: i * rhs_cols + j
-        idx_res_temp = b_j.insert(arith.MuliOp(i, rhs_cols)).results[0]
-        idx_res = b_j.insert(arith.AddiOp(idx_res_temp, j)).results[0]
-        res_elem_ptr = b_j.insert(llvm.GEPOp(res_ptr, [llvm.GEP_USE_SSA_VAL], f64, ssa_indices=[idx_res])).results[0]
-        b_j.insert(llvm.StoreOp(final_sum, res_elem_ptr))
+        # C[id] = final_sum
+        ptr_C = self.builder.insert(llvm.GEPOp(arg_C, [llvm.GEP_USE_SSA_VAL], f32, ssa_indices=[id_i64])).results[0]
+        self.builder.insert(llvm.StoreOp(final_sum, ptr_C))
 
-        b_j.insert(scf.YieldOp())
-        b_i.insert(scf.YieldOp())
+        self.builder.insert(func.ReturnOp())
 
-        # construct result struct
-        struct_type = llvm.LLVMStructType.from_type_list([llvm.LLVMPointerType(), i32, i32])
-        struct_val = self.builder.insert(llvm.UndefOp(struct_type)).results[0]
-        struct_val = self.builder.insert(llvm.InsertValueOp(DenseArrayBase.from_list(i64, [0]), struct_val, res_ptr)).results[0]
-        struct_val = self.builder.insert(llvm.InsertValueOp(DenseArrayBase.from_list(i64, [1]), struct_val, lhs_rows)).results[0]
-        struct_val = self.builder.insert(llvm.InsertValueOp(DenseArrayBase.from_list(i64, [2]), struct_val, rhs_cols)).results[0]
+        return self.module
 
-        return struct_val
 
-    def _print_tensor(self, val):
-        # extract pointer, rows, and cols from struct
-        ptr = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [0]), val, llvm.LLVMPointerType())).results[0]
-        rows = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [1]), val, i32)).results[0]
-        cols = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [2]), val, i32)).results[0]
+def fix_mlir(mlir_text):
+    # Fix entry block args format from xdsl output to what mlir-opt expects
+    match = re.search(r"\^bb0\((.*)\):", mlir_text)
+    if not match:
+        return mlir_text
 
-        # printf signature: (ptr, ...) -> i32
-        printf_type = llvm.LLVMFunctionType([llvm.LLVMPointerType()], i32, is_variadic=True)
+    args_content = match.group(1)
+    arg_defs = args_content.split(",")
+    mapping = {}
+    for i, arg_def in enumerate(arg_defs):
+        arg_name = arg_def.strip().split(" ")[0]
+        target_name = f"%{i}"
+        mapping[arg_name] = target_name
 
-        # printf("Tensor(%d x %d):\n", rows, cols)
-        fmt_hdr = self._get_str_global("Tensor(%d x %d):\n", self.builder)
-        call_op = llvm.CallOp(SymbolAttr("printf"), fmt_hdr, rows, cols, return_type=i32)
-        call_op.attributes["var_callee_type"] = printf_type
-        self.builder.insert(call_op)
+    fixed_text = mlir_text.replace(match.group(0), "")
+    for src, dst in mapping.items():
+        fixed_text = re.sub(rf"{src}(?!\d)", dst, fixed_text)
 
-        c0 = self.builder.insert(arith.ConstantOp(IntegerAttr(0, i32))).results[0]
-        c1 = self.builder.insert(arith.ConstantOp(IntegerAttr(1, i32))).results[0]
+    return fixed_text
 
-        loop_i = self.builder.insert(scf.ForOp(c0, rows, c1, [], [Block(arg_types=[i32])]))
-        b_i = Builder(InsertPoint.at_end(loop_i.body.blocks[0]))
-        i = loop_i.body.blocks[0].args[0]
 
-        loop_j = b_i.insert(scf.ForOp(c0, cols, c1, [], [Block(arg_types=[i32])]))
-        b_j = Builder(InsertPoint.at_end(loop_j.body.blocks[0]))
-        j = loop_j.body.blocks[0].args[0]
+class Interpreter:
+    def __init__(self):
+        self.matmul_binary = None
 
-        # load val
-        idx_temp = b_j.insert(arith.MuliOp(i, cols)).results[0]
-        idx = b_j.insert(arith.AddiOp(idx_temp, j)).results[0]
-        elem_ptr = b_j.insert(llvm.GEPOp(ptr, [llvm.GEP_USE_SSA_VAL], f64, ssa_indices=[idx])).results[0]
-        elem = b_j.insert(llvm.LoadOp(elem_ptr, f64)).results[0]
+    def compile_matmul_kernel(self):
+        if self.matmul_binary:
+            return self.matmul_binary
 
-        # printf("%f ", elem)
-        fmt_elem = self._get_str_global("%f ", b_j)
-        call_op = llvm.CallOp(SymbolAttr("printf"), fmt_elem, elem, return_type=i32)
-        call_op.attributes["var_callee_type"] = printf_type
-        b_j.insert(call_op)
+        # Get MLIR string
+        op = MatmulKernelGen().gen()
+        from io import StringIO
 
-        # end of inner loop
-        b_j.insert(scf.YieldOp())
+        from xdsl.printer import Printer
 
-        # printf("\n")
-        fmt_nl = self._get_str_global("\n", b_i)
-        call_op = llvm.CallOp(SymbolAttr("printf"), fmt_nl, return_type=i32)
-        call_op.attributes["var_callee_type"] = printf_type
-        b_i.insert(call_op)
+        buf = StringIO()
+        printer = Printer(stream=buf)
+        printer.print_op(op)
+        mlir_source = buf.getvalue()
 
-        b_i.insert(scf.YieldOp())
+        # Fix MLIR for mlir-opt
+        mlir_source = fix_mlir(mlir_source)
 
-    def _get_str_global(self, val: str, builder: Builder = None) -> builtin.SSAValue:
-        if builder is None:
-            builder = self.builder
-        if val not in self.str_cache:
-            # create unique name for string global
-            global_name = f".str.{self.str_cnt}"
-            self.str_cnt += 1
-            self.str_cache[val] = global_name
-            # create null-terminated string data
-            string_data = val.encode("utf-8") + b"\0"
-            array_type = llvm.LLVMArrayType.from_size_and_type(len(string_data), builtin.i8)
-            array_value = ArrayAttr([IntegerAttr(byte, builtin.i8) for byte in string_data])
+        # Run mlir-opt pipeline
+        cmd_opt = [
+            "mlir-opt",
+            "--convert-scf-to-cf",
+            "--convert-func-to-llvm",
+            "--convert-arith-to-llvm",
+            "--convert-cf-to-llvm",
+            "--reconcile-unrealized-casts",
+        ]
+        opt_proc = subprocess.run(cmd_opt, input=mlir_source, capture_output=True, text=True)
+        if opt_proc.returncode != 0:
+            print(f"mlir-opt failed:\n{opt_proc.stderr}")
+            sys.exit(1)
+        opt_mlir = opt_proc.stdout
 
-            # create global string constant
-            global_op = llvm.GlobalOp(array_type, StringAttr(global_name), linkage=llvm.LinkageAttr("internal"), constant=True, value=array_value)
-            # insert global at beginning of module
-            self.module.body.blocks[0].insert_op_before(global_op, self.module.body.blocks[0].first_op)
+        # Run mlir-translate
+        cmd_trans = ["mlir-translate", "--mlir-to-llvmir"]
+        trans_proc = subprocess.run(cmd_trans, input=opt_mlir, capture_output=True, text=True, check=True)
+        llvm_ir = trans_proc.stdout
 
-        # return pointer to global string
-        global_name = self.str_cache[val]
-        return builder.insert(llvm.AddressOfOp(global_name, llvm.LLVMPointerType())).results[0]
+        # Compile to Metal Lib
+        # Map argument 6 (the 7th arg) to global_id
+        self.matmul_binary = compile_to_metallib(llvm_ir, kernel_overrides={"matmul": {"6": "global_id"}})
+        return self.matmul_binary
+
+    def run(self, tree: Lark):
+        for expr in tree.children:
+            self.eval(expr)
+
+    def eval(self, node):
+        if node.data == "tensor_expr":
+            rows = int(node.children[0])
+            cols = int(node.children[1])
+            data = [float(val) for val in node.children[2:]]
+            return {"rows": rows, "cols": cols, "data": data}
+
+        if node.data == "matmul_expr":
+            lhs = self.eval(node.children[0])
+            rhs = self.eval(node.children[1])
+            return self.exec_matmul(lhs, rhs)
+
+        if node.data == "print_expr":
+            val = self.eval(node.children[0])
+            self.print_tensor(val)
+
+    def exec_matmul(self, A, B):
+        M = A["rows"]
+        K = A["cols"]
+        K_rhs = B["rows"]
+        N = B["cols"]
+
+        assert K == K_rhs, f"Dimension mismatch: {M}x{K} @ {K_rhs}x{N}"
+
+        binary = self.compile_matmul_kernel()
+        device, pso = _create_compute_pipeline(binary, "matmul")
+        print(f"Running on Metal Device: {device.name()}")
+
+        def create_buffer(data):
+            raw_array = (ctypes.c_float * len(data))(*data)
+            return device.newBufferWithBytes_length_options_(
+                raw_array,
+                ctypes.sizeof(raw_array),
+                Metal.MTLResourceStorageModeShared,
+            )
+
+        buf_a = create_buffer(A["data"])
+        buf_b = create_buffer(B["data"])
+        # output size M * N
+        buf_c = device.newBufferWithLength_options_(M * N * 4, Metal.MTLResourceStorageModeShared)
+
+        m_bytes = struct.pack("i", M)
+        n_bytes = struct.pack("i", N)
+        k_bytes = struct.pack("i", K)
+
+        def encode_args(encoder):
+            encoder.setBuffer_offset_atIndex_(buf_a, 0, 0)
+            encoder.setBuffer_offset_atIndex_(buf_b, 0, 1)
+            encoder.setBuffer_offset_atIndex_(buf_c, 0, 2)
+            encoder.setBytes_length_atIndex_(m_bytes, 4, 3)
+            encoder.setBytes_length_atIndex_(n_bytes, 4, 4)
+            encoder.setBytes_length_atIndex_(k_bytes, 4, 5)
+            # Argument 6 (global_id) is handled by AIR's thread position in grid
+
+        grid_size = Metal.MTLSize(M * N, 1, 1)
+        threadgroup_size = Metal.MTLSize(1, 1, 1)
+
+        _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
+
+        output_ptr = buf_c.contents()
+        output_buffer = output_ptr.as_buffer(M * N * 4)
+        results_view = memoryview(output_buffer).cast("f")
+
+        return {"rows": M, "cols": N, "data": list(results_view)}
+
+    def print_tensor(self, tensor):
+        print(f"Tensor({tensor['rows']} x {tensor['cols']}):")
+        for i in range(tensor["rows"]):
+            row_str = ""
+            for j in range(tensor["cols"]):
+                val = tensor["data"][i * tensor["cols"] + j]
+                row_str += f"{val:.6f} "
+            print(row_str)
 
 
 if __name__ == "__main__":
     tree = Lark(GRAMMAR, start="start").parse(SOURCE)
-    module_op = IRGen().gen(tree)
-    print(module_op)
+    Interpreter().run(tree)
