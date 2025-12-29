@@ -1,8 +1,7 @@
 TODO:
 
-- rewrite the thing in llvmlite instead of xdsl
-- try to pack everything into a single python script
-
+write a bunch of test python scripts
+make them all call an external llvm_to_air.py script
 
 
 my own gpu language (xdsl module) -> llvm ir (xdsl lowering) -> air (the llvm_to_air.py script) -> metallib

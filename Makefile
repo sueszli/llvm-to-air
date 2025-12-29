@@ -1,12 +1,3 @@
-.PHONY: run
-run:
-	uv run src/gen_llvm_xdsl.py > src/input.ll
-	uv run src/llvm_to_air.py src/input.ll > src/test.ll
-	xcrun -sdk macosx metal -c src/test.ll -o src/test.air
-	xcrun -sdk macosx metallib src/test.air -o src/test.metallib
-	uv run src/verify.py
-	@rm -rf src/input.ll src/test.ll src/test.air src/test.metallib
-
 .PHONY: venv
 venv:
 	test -f requirements.txt || (uvx pipreqs . --mode no-pin --encoding utf-8 --ignore .venv && mv requirements.txt requirements.in && uv pip compile requirements.in -o requirements.txt)
