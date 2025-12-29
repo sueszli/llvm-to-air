@@ -81,8 +81,7 @@ class MetadataGenerator:
 
             # f.f32.u.i32 -> f, f32, u, i32
             # map air types back to llvm types for declaration
-            def map_type(t):
-                return AIR_TO_LLVM_TYPES.get(t, t)
+            map_type = lambda t: AIR_TO_LLVM_TYPES.get(t, t)
 
             # index 1 is dest type, Index 3 is src type
             ret_type = map_type(parts[1])
