@@ -58,7 +58,7 @@ class MetadataGenerator:
     def emit(kernels: List[Tuple[str, List[Tuple[str, str, bool]]]], used_intrinsics: Set[str]) -> List[str]:
         lines = ["\ndeclare void @air.wg.barrier(i32, i32) local_unnamed_addr #1"]
 
-        # intrinsics declarations (add signatures for built-in functions)
+        # signatures for used intrinsics (built in functions). mapping air types back to llvm types
         for intr in sorted(used_intrinsics):
             lines.extend(MetadataGenerator._emit_intrinsic_decl(intr))
 
@@ -67,6 +67,7 @@ class MetadataGenerator:
         lines.append("attributes #1 = { convergent mustprogress nounwind willreturn }")
         lines.append("attributes #2 = { convergent nounwind willreturn }")
 
+        # constructs metadata nodes linking kernels to their arguments and compile options
         if kernels:
             lines.extend(MetadataGenerator._generate_kernel_metadata(kernels))
 
@@ -159,7 +160,7 @@ class MetadataGenerator:
         src_file = m(f'!{{!"input.ll"}}')
 
         # top level
-        top_meta = [f"!air.kernel = !{{{', '.join(kernel_nodes)}}}", f"!air.compile_options = !{{{', '.join(desc_refs[:3])}}}", f"!llvm.ident = !{{{desc_refs[3]}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{metal_ver}}}", f"!air.source_file_name = !{{{src_file}}}", ""]
+        top_meta = [f"!air.kernel = !{{{', '.join(kernel_nodes)}}}", f"!air.compile_options = !{{{', '.join(desc_refs[:3])}}}", f"!llvm.ident = !{{{desc_refs[3]}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{metal_ver}}}", f"!air.source_file_name = !{{{src_file}}}", "",]
 
         return top_meta + lines
 
@@ -194,7 +195,7 @@ class MetadataGenerator:
 class IntrinsicHandler:
     @staticmethod
     def handle_type_casts(line: str, used_intrinsics: Set[str]) -> str:
-        # converts LLVM type casting instructions into AIR conversion intrinsics.
+        # converts LLVM type casting instructions into AIR conversion intrinsics
         conversions = [
             (r"(%\S+)\s*=\s*uitofp\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.f.{dst}.u.{src}"),
             (r"(%\S+)\s*=\s*sitofp\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.f.{dst}.s.{src}"),
@@ -220,7 +221,7 @@ class IntrinsicHandler:
 
     @staticmethod
     def replace_intrinsics(line: str, used_intrinsics: Set[str]) -> str:
-        # maps standard LLVM math functions to their AIR equivalents.
+        # maps standard LLVM math functions to their AIR equivalents
         if "call" not in line:
             return line
 
@@ -372,6 +373,7 @@ class AirTranslator:
 
             i += 1
 
+        # generate metadata
         self.output_lines.extend(MetadataGenerator.emit(self.kernels, self.used_intrinsics))
         return "\n".join(self.output_lines)
 
