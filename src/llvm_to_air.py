@@ -300,7 +300,15 @@ def _generate_metadata(func_name: str, args_list: List[Tuple[str, str]]) -> List
     meta_id += 1
 
     # Top-level metadata references
-    result = [f"!air.kernel = !{{{kernel_node}}}", f"!air.compile_options = !{{{denorms}, {fastmath}, {fb}}}", f"!llvm.ident = !{{{ident}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{lang}}}", f"!air.source_file_name = !{{{src}}}", ""]
+    result = [
+        f"!air.kernel = !{{{kernel_node}}}",
+        f"!air.compile_options = !{{{denorms}, {fastmath}, {fb}}}",
+        f"!llvm.ident = !{{{ident}}}",
+        f"!air.version = !{{{version}}}",
+        f"!air.language_version = !{{{lang}}}",
+        f"!air.source_file_name = !{{{src}}}",
+        "",
+    ]
     result.extend(lines)
     return result
 
