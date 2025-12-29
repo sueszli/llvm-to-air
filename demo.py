@@ -53,19 +53,23 @@ class IRGen:
         self.builder.insert(llvm.FuncOp("printf", llvm.LLVMFunctionType([llvm.LLVMPointerType()], i32, is_variadic=True), linkage=llvm.LinkageAttr("external")))
 
     def gen(self, tree: Lark) -> ModuleOp:
-        # Create main function
+        # main function
         entry_block = Block()
         main_func = func.FuncOp("main", FunctionType.from_lists([], [i32]), Region(entry_block))
         self.module.body.blocks[0].add_op(main_func)
 
+        # enter main function scope
         prev_builder = self.builder
         self.builder = Builder(InsertPoint.at_end(entry_block))
 
+        # iter through each op
         for expr in tree.children:
             self._gen_expr(expr)
 
         zero = self.builder.insert(arith.ConstantOp(IntegerAttr(0, i32))).results[0]
         self.builder.insert(func.ReturnOp(zero))
+
+        # leave main function scope
         self.builder = prev_builder
 
         return self.module
@@ -75,7 +79,7 @@ class IRGen:
             rows = int(node.children[0])
             cols = int(node.children[1])
             data = [float(val) for val in node.children[2:]]
-            assert len(data) == rows * cols, "Data length mismatch with shape"
+            assert len(data) == rows * cols, "data length mismatch with shape"
             return self._create_tensor(rows, cols, data)
 
         if node.data == "matmul_expr":
