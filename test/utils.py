@@ -1,5 +1,6 @@
 import ctypes
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -23,8 +24,8 @@ def compile_to_metallib(llvm_ir: str) -> bytes:
         f_ll.write(air_llvm_text.encode("utf-8"))
         f_ll.flush()
         cmd = f"xcrun -sdk macosx metal -x ir -c {f_ll.name} -o {f_air.name} && xcrun -sdk macosx metallib {f_air.name} -o {f_lib.name}"
-        ret = os.system(cmd)
-        assert ret == 0, "compilation failed"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        assert result.returncode == 0, f"compilation failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}\nAIR CODE:\n{air_llvm_text}"
         lib_data = Path(f_lib.name).read_bytes()
         assert len(lib_data) > 0, "generated metallib is empty"
         return lib_data

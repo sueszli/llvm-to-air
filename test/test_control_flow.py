@@ -1,12 +1,14 @@
 import pytest
 from utils import compile_to_metallib, run_kernel_1d_float
 
+#
 # tests translation of 'br', 'label', and 'phi'.
 #
 #   if val > 10.0:
 #       res = val + 1.0
 #   else:
 #       res = val - 1.0
+#
 
 LLVM_IR = """
 define void @test_kernel(float* %in_ptr, float* %out_ptr, i32 %global_id, i32 %local_id, float* %shared_ptr) 

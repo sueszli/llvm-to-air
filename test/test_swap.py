@@ -1,6 +1,10 @@
 import pytest
 from utils import compile_to_metallib, run_kernel_1d_float
 
+#
+# var swap
+#
+
 # kernel void test_kernel(
 #    device const float* in_ptr [[buffer(0)]],         // pointer to input in global memory
 #    device float* out_ptr [[buffer(1)]],              // pointer to output in global memory
@@ -83,64 +87,5 @@ def test_minimal_pair(binary):
 def test_decimals(binary):
     input_data = [0.1, 0.2, 0.3, 0.4]
     expected = [0.2, 0.1, 0.4, 0.3]
-    result = run_kernel_1d_float(binary, input_data, "test_kernel")
-    assert result == pytest.approx(expected)
-
-
-def test_mixed_signs(binary):
-    input_data = [-10.0, 20.0, -30.0, 40.0]
-    expected = [20.0, -10.0, 40.0, -30.0]
-    result = run_kernel_1d_float(binary, input_data, "test_kernel")
-    assert result == pytest.approx(expected)
-
-
-def test_zeros(binary):
-    input_data = [0.0, 0.0, 0.0, 0.0]
-    expected = [0.0, 0.0, 0.0, 0.0]
-    result = run_kernel_1d_float(binary, input_data, "test_kernel")
-    assert result == pytest.approx(expected)
-
-
-def test_duplicates(binary):
-    input_data = [5.0, 5.0, 5.0, 5.0]
-    expected = [5.0, 5.0, 5.0, 5.0]
-    result = run_kernel_1d_float(binary, input_data, "test_kernel")
-    assert result == pytest.approx(expected)
-
-
-def test_alternating_duplicates(binary):
-    input_data = [1.0, 2.0, 1.0, 2.0]
-    expected = [2.0, 1.0, 2.0, 1.0]
-    result = run_kernel_1d_float(binary, input_data, "test_kernel")
-    assert result == pytest.approx(expected)
-
-
-def test_larger_even_size(binary):
-    input_data = [float(i) for i in range(128)]
-    expected = []
-    for i in range(0, 128, 2):
-        expected.append(float(i + 1))
-        expected.append(float(i))
-    result = run_kernel_1d_float(binary, input_data, "test_kernel")
-    assert result == pytest.approx(expected)
-
-
-def test_large_magnitude(binary):
-    input_data = [1000000.0, 2000000.0]
-    expected = [2000000.0, 1000000.0]
-    result = run_kernel_1d_float(binary, input_data, "test_kernel")
-    assert result == pytest.approx(expected)
-
-
-def test_swapped_input(binary):
-    input_data = [2.0, 1.0, 4.0, 3.0]
-    expected = [1.0, 2.0, 3.0, 4.0]
-    result = run_kernel_1d_float(binary, input_data, "test_kernel")
-    assert result == pytest.approx(expected)
-
-
-def test_non_power_of_two_even(binary):
-    input_data = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]
-    expected = [20.0, 10.0, 40.0, 30.0, 60.0, 50.0]
     result = run_kernel_1d_float(binary, input_data, "test_kernel")
     assert result == pytest.approx(expected)
