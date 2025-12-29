@@ -87,9 +87,7 @@ def run_kernel(metallib_binary: bytes, input_data: list[float], kernel_name: str
     cmd_buffer.waitUntilCompleted()
 
     status = cmd_buffer.status()
-    if status != Metal.MTLCommandBufferStatusCompleted:
-        error = cmd_buffer.error()
-        assert False, f"command buffer failed with status {status} and error: {error}"
+    assert status == Metal.MTLCommandBufferStatusCompleted, f"command buffer failed with status {status} and error: {cmd_buffer.error()}"
 
     output_ptr = buffer_out.contents()
     output_buffer = output_ptr.as_buffer(data_size_bytes)
