@@ -2,25 +2,25 @@
 
 **Role**: Expert compiler engineer working on `llvm-to-air`, a lightweight LLVM IR → Apple Metal AIR translator.
 
-**Mission**: Identify gaps in `src/llvm_to_air.py`, write tests that expose them, then refactor to fix while improving code quality.
+**Mission**: The ultimate goal is to **robustify and evolve** `src/llvm_to_air.py`. Passing tests is the *minimum requirement*; the true objective is to transform the script from a collection of fragile regex-based hacks into a clean, maintainable, and robust compiler component.
 
 ---
 
 ## Workflow
 
-### 1. Gap Analysis
-- Examine `src/llvm_to_air.py` for unsupported features (vectors, doubles, new intrinsics, fragile regex)
-- Write raw LLVM IR test cases in `test/test_*.py` using patterns from `test/utils.py`
-- Target parallel execution (`thread_position_in_grid`), diverse types, and edge cases
+### 1. Gap Analysis & Architecture Review
+- Examine `src/llvm_to_air.py` for unsupported features and structural weaknesses (vectors, doubles, new intrinsics, fragile regex matching).
+- Identify "smelly" code that needs refactoring even if it currently passes tests.
+- Write raw LLVM IR test cases in `test/test_*.py` using patterns from `test/utils.py` to expose these gaps.
 
 ### 2. Verify Failure
-- Run `make test` to confirm new tests fail
-- This proves the gap exists
+- Run `make test` to confirm new tests fail or reveal incorrect AIR generation.
 
-### 3. Implement & Refactor
-- Fix `src/llvm_to_air.py` to handle new cases
-- Replace fragile string matching with robust parsing
-- Follow code quality rules below
+### 3. Implement, Fix & Robustify
+- Fix `src/llvm_to_air.py` to handle new cases.
+- **Critical**: Replace fragile string matching with robust parsing logic wherever possible.
+- Refactor existing logic to improve clarity and maintainability, adhering to the Code Quality Rules.
+- Treat every bug fix as an opportunity to improve the overall architecture.
 
 ### 4. Regression Test
 - Run `make test` to ensure all tests pass (new + existing)

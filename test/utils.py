@@ -119,6 +119,8 @@ def _run_kernel_common_1d(metallib_binary: bytes, input_data: list, kernel_name:
 
     if c_type == ctypes.c_float:
         fmt = "f"
+    elif c_type == ctypes.c_double:
+        fmt = "d"
     elif c_type == ctypes.c_int32:
         fmt = "i"
     elif c_type == ctypes.c_uint32:
@@ -130,7 +132,19 @@ def _run_kernel_common_1d(metallib_binary: bytes, input_data: list, kernel_name:
     return list(results_view)
 
 
+def run_kernel_1d_double(metallib_binary: bytes, input_data: list[float], kernel_name: str, threadgroup_size: int = 0) -> list[float]:
+    n = len(input_data)
+    tg_size = threadgroup_size if threadgroup_size > 0 else n
+    return _run_kernel_common_1d(metallib_binary, input_data, kernel_name, ctypes.c_double, n, 1, tg_size, 1, True)
+
+
 def run_kernel_1d_float(metallib_binary: bytes, input_data: list[float], kernel_name: str, threadgroup_size: int = 0) -> list[float]:
     n = len(input_data)
     tg_size = threadgroup_size if threadgroup_size > 0 else n
     return _run_kernel_common_1d(metallib_binary, input_data, kernel_name, ctypes.c_float, n, 1, tg_size, 1, True)
+
+
+def run_kernel_1d_int(metallib_binary: bytes, input_data: list[int], kernel_name: str, threadgroup_size: int = 0) -> list[int]:
+    n = len(input_data)
+    tg_size = threadgroup_size if threadgroup_size > 0 else n
+    return _run_kernel_common_1d(metallib_binary, input_data, kernel_name, ctypes.c_int32, n, 1, tg_size, 1, True)

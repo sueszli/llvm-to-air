@@ -5,24 +5,32 @@ from typing import Dict, List, Tuple
 def _get_type_info(type_str: str) -> Tuple[str, int, int]:
     """Returns (base_name, size, align) for a given LLVM type."""
     t = type_str.strip()
-    if "<" in t and ">" in t:
-        match = re.search(r"<(\d+)\s+x\s+([\w\d]+)>", t)
+
+    # Vector types: <N x type>
+    if t.startswith("<") and t.endswith(">"):
+        match = re.search(r"<(\d+)\s+x\s+([\w\d\.]+)>", t)
         if match:
             count = int(match.group(1))
             elem_type = match.group(2)
-            if elem_type == "float":
-                return ("float", count * 4, count * 4)
-            if elem_type == "i32":
-                return ("int", count * 4, count * 4)
+            base_name, elem_size, elem_align = _get_type_info(elem_type)
+            # Alignment for vectors is usually equal to its size (up to a point/PO2)
+            total_size = elem_size * count
+            return (base_name, total_size, total_size)
 
+    if "double" in t:
+        return ("double", 8, 8)
     if "float" in t:
         return ("float", 4, 4)
+    if "i64" in t:
+        return ("long", 8, 8)
     if "i32" in t:
         return ("int", 4, 4)
+    if "i16" in t:
+        return ("short", 2, 2)
     if "i8" in t:
         return ("char", 1, 1)
 
-    return (t, 4, 4)
+    return ("void", 0, 0)
 
 
 def _get_air_metadata_content(arg_type: str, arg_name: str) -> Tuple[str, int]:
@@ -38,6 +46,7 @@ def _get_air_metadata_content(arg_type: str, arg_name: str) -> Tuple[str, int]:
         return ('!"air.thread_position_in_threadgroup", !"air.arg_type_name", !"uint"', 0)
 
     # Buffers (pointers)
+    # Check for * or if it implies a pointer (like addrspace)
     if "addrspace" in arg_type or "*" in arg_type:
         base_t_str = arg_type.replace("*", "").strip()
         base_t_str = re.sub(r"addrspace\(\d+\)", "", base_t_str).strip()
@@ -52,7 +61,7 @@ def _get_air_metadata_content(arg_type: str, arg_name: str) -> Tuple[str, int]:
         meta = f'!"air.buffer", !"air.location_index", i32 {{loc_index}}, i32 1, !"air.read_write", !"air.address_space", i32 {addr_space_id}, !"air.arg_type_size", i32 {size}, !"air.arg_type_align_size", i32 {align}, !"air.arg_type_name", !"{base_name}"'
         return (meta, addr_space_id)
 
-    # Default value
+    # Default value (scalars passed as arguments usually?)
     clean_type = arg_type.strip()
     return (f'!"air.arg_type_name", !"{clean_type}"', 0)
 
@@ -80,17 +89,17 @@ def to_air(llvm_ir_text: str) -> str:
                 i += 1
                 full_sig += " " + lines[i]
 
-            match = re.search(r"define void @\"?([\w\.]+)\"?\s*\((.*?)\).*?{", full_sig, re.DOTALL)
-            if not match:
-                match = re.search(r"define void @(.+?)\s*\((.*?)\).*?{", full_sig, re.DOTALL)
-
-            if not match:
+            # Parse signature - using robust regex
+            # Matches: define void @NAME(...)
+            sig_match = re.search(r"define\s+void\s+@\"?([\w\.]+)\"?\s*\((.*?)\).*?{", full_sig, re.DOTALL)
+            if not sig_match:
                 raise ValueError(f"Failed to parse function signature: {full_sig}")
 
-            raw_name = match.group(1)
+            raw_name = sig_match.group(1)
             func_name = raw_name.replace('"', "")
 
-            raw_args = match.group(2)
+            raw_args = sig_match.group(2)
+            # Split args by comma, but be careful (simple split for now assumes no commas in types)
             arg_chunks = [x.strip() for x in raw_args.split(",")] if raw_args.strip() else []
 
             new_sig_parts = []
@@ -98,13 +107,19 @@ def to_air(llvm_ir_text: str) -> str:
             for arg_chunk in arg_chunks:
                 if not arg_chunk:
                     continue
+
+                # Split type and name. Name is the last token starting with %
+                # Example: float* %a
+                # Example: <4 x float>* %b
+
                 parts = arg_chunk.split()
                 a_name = parts[-1]
-                a_type = " ".join(parts[:-1])
+                a_type = " ".join(parts[:-1])  # Everything else is type
 
                 clean_name = a_name.strip()
                 res_type = a_type
 
+                # Check if pointer
                 if "*" in a_type:
                     if "shared" in clean_name:
                         as_id = 3
@@ -114,6 +129,8 @@ def to_air(llvm_ir_text: str) -> str:
                     var_addrspaces[clean_name] = as_id
 
                     if "addrspace" not in a_type:
+                        # Insert addrspace before *
+                        # We need to handle <4 x float>* -> <4 x float> addrspace(1)*
                         res_type = a_type.replace("*", f" addrspace({as_id})*")
 
                     new_sig_parts.append(f'{res_type} nocapture noundef "air-buffer-no-alias" {clean_name}')
@@ -155,7 +172,7 @@ def to_air(llvm_ir_text: str) -> str:
                 return f"{type_part} addrspace({as_id})* {var_part}"
             return m.group(0)
 
-        new_line = re.sub(r"([\w\s<>]+)\*\s+(%[\w\.\"]+)", robust_replacer, line)
+        new_line = re.sub(r"([\w\s<>\.]+)\*\s+(%[\w\.\"]+)", robust_replacer, line)
 
         if "=" in new_line:
             lhs_match = re.search(r"(%[\w\.\"]+)\s*=", new_line)
@@ -172,7 +189,7 @@ def to_air(llvm_ir_text: str) -> str:
 
     # Metadata Footer
     output_lines.append("\ndeclare void @air.wg.barrier(i32, i32) local_unnamed_addr #1")
-    output_lines.append('attributes #0 = { argmemonly mustprogress nofree norecurse nosync nounwind willreturn "approx-func-fp-math"="true" "frame-pointer"="all" "min-legal-vector-width"="0" "no-builtins" "no-infs-fp-math"="true" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "unsafe-fp-math"="true" }')
+    output_lines.append('attributes #0 = { argmemonly mustprogress nofree norecurse nosync nounwind willreturn "frame-pointer"="all" "min-legal-vector-width"="0" "no-builtins" "no-trapping-math"="true" "stack-protector-buffer-size"="8" }')
     output_lines.append("attributes #1 = { convergent mustprogress nounwind willreturn }")
     output_lines.append("attributes #2 = { convergent nounwind willreturn }")
 
@@ -239,7 +256,7 @@ def to_air(llvm_ir_text: str) -> str:
         src = f"!{meta_id}"
         meta_id += 1
 
-        output_lines.extend([f"!air.kernel = !{{{kernel_node}}}", f"!air.compile_options = !{{{denorms}, {fastmath}, {fb}}}", f"!llvm.ident = !{{{ident}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{lang}}}", f"!air.source_file_name = !{{{src}}}", ""])
+        output_lines.extend([f"!air.kernel = !{{{kernel_node}}}", f"!air.compile_options = !{{{denorms}, {fb}}}", f"!llvm.ident = !{{{ident}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{lang}}}", f"!air.source_file_name = !{{{src}}}", ""])
         output_lines.extend(lines)
 
     return "\n".join(output_lines)
