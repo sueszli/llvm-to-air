@@ -2,7 +2,25 @@ import platform
 import re
 from typing import Dict, List, Set, Tuple
 
-from .utils import AIR_TO_LLVM_TYPES, LLVM_TO_AIR_TYPES, get_type_info
+from .utils import get_type_info
+
+AIR_TO_LLVM_TYPES = {
+    "f32": "float",
+    "f64": "double",
+    "i32": "i32",
+    "i16": "i16",
+    "i8": "i8",
+    "i64": "i64",
+}
+
+LLVM_TO_AIR_TYPES = {
+    "float": "f32",
+    "double": "f64",
+    "i32": "i32",
+    "i16": "i16",
+    "i8": "i8",
+    "i64": "i64",
+}
 
 
 class AirTranslator:
@@ -45,7 +63,6 @@ class AirTranslator:
         self.output_lines.append(f'target triple = "air64_v27-apple-macosx{mac_version}"\n')
 
     def _process_function(self, start_idx: int) -> int:
-        """Parses and converts a single function."""
         self.var_addrspaces = {}
         self.scalar_loads = {}
 
@@ -55,12 +72,12 @@ class AirTranslator:
 
         idx = self._skip_comments_and_empty(idx)
 
-        # Handle empty body
+        # empty body
         if idx < len(self.lines) and self.lines[idx].strip() == "}":
             self.output_lines.append("}")
             return idx + 1
 
-        # Handle explicit entry label
+        # explicit entry label
         if idx < len(self.lines) and self.lines[idx].strip().endswith(":"):
             self.output_lines.append(self.lines[idx])
             idx += 1
