@@ -9,6 +9,12 @@ Your goal is to evolve `src/llvm_to_air.py` from a script of fragile regex hacks
 
 Make sure to look at everything implemented so far in `/test/*`. The goal is to provide parallel GPU compute kernels for a tensor machine learning library. Study `test/test_matmul.py` for reference.
 
+Ideas:
+
+- linear regression
+- logistic regression
+- small multi-layer perceptron
+
 ## Core Workflow (The TDD Cycle)
 
 You must strictly adhere to the Red -> Green -> Refactor cycle for every task.
