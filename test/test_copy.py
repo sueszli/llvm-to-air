@@ -2,7 +2,7 @@ import pytest
 from utils import compile_to_metallib, run_kernel_1d_float
 
 #
-# vector copy
+# out[i] = in[i]
 #
 
 LLVM_IR_VEC_COPY = """
