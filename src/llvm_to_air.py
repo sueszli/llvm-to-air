@@ -210,14 +210,99 @@ def _replace_intrinsics(line: str) -> Tuple[str, Set[str]]:
     if "call" in line:
         # replace llvm intrinsic calls with air equivalent
         # llvm.exp.f32 -> air.exp.f32
-        math_ops = ["exp", "log", "sin", "cos", "sqrt", "ceil", "floor", "fabs", "pow", "tanh"]
+        math_ops = ["exp", "log", "sin", "cos", "sqrt", "ceil", "floor", "fabs", "pow", "tanh", "fma", "trunc", "round"]
         for op in math_ops:
             llvm_intr = f"@llvm.{op}.f32"
             air_intr = f"@air.{op}.f32"
             if llvm_intr in line:
                 line = line.replace(llvm_intr, air_intr)
                 used_intr.add(air_intr)
+
+        # Special mappings: minnum->fmin, maxnum->fmax
+        if "@llvm.minnum.f32" in line:
+            line = line.replace("@llvm.minnum.f32", "@air.fmin.f32")
+            used_intr.add("@air.fmin.f32")
+        if "@llvm.maxnum.f32" in line:
+            line = line.replace("@llvm.maxnum.f32", "@air.fmax.f32")
+            used_intr.add("@air.fmax.f32")
     return line, used_intr
+
+
+def _generate_metadata(func_name: str, args_list: List[Tuple[str, str]]) -> List[str]:
+    """
+    Generates Metal AIR metadata for a kernel function.
+
+    Args:
+        func_name: Name of the kernel function
+        args_list: List of (type, name) tuples for function arguments
+
+    Returns:
+        List of metadata lines to append to output
+    """
+    lines = []
+    meta_id = 0
+
+    def m(c):
+        nonlocal meta_id
+        lines.append(f"!{meta_id} = {c}")
+        meta_id += 1
+        return f"!{meta_id-1}"
+
+    arg_meta_refs = []
+    global_buffer_idx = 0
+    threadgroup_buffer_idx = 0
+
+    for idx, (at, an) in enumerate(args_list):
+        template, as_id = _get_air_metadata_content(at, an)
+        content = template
+        if "{loc_index}" in template:
+            if as_id == 3:
+                buf_idx = threadgroup_buffer_idx
+                threadgroup_buffer_idx += 1
+            else:
+                buf_idx = global_buffer_idx
+                global_buffer_idx += 1
+            content = content.replace("{loc_index}", str(buf_idx))
+
+        if "air.arg_name" not in content:
+            content += f', !"air.arg_name", !"{an}"'
+
+        arg_meta_refs.append(m(f"!{{i32 {idx}, {content}}}"))
+
+    empty = m("!{}")
+    meta_sig_parts = [x[0] for x in args_list]
+    sig_str = f"void ({', '.join(meta_sig_parts)})*"
+    lines.append(f"!{meta_id} = !{{{sig_str} @{func_name}, {empty}, !{{{', '.join(arg_meta_refs)}}}}}")
+    kernel_node = f"!{meta_id}"
+    meta_id += 1
+
+    # Standard AIR metadata
+    lines.append(f'!{meta_id} = !{{!"air.compile.denorms_disable"}}')
+    denorms = f"!{meta_id}"
+    meta_id += 1
+    lines.append(f'!{meta_id} = !{{!"air.compile.fast_math_enable"}}')
+    fastmath = f"!{meta_id}"
+    meta_id += 1
+    lines.append(f'!{meta_id} = !{{!"air.compile.framebuffer_fetch_enable"}}')
+    fb = f"!{meta_id}"
+    meta_id += 1
+    lines.append(f'!{meta_id} = !{{!"Apple metal version 32023.830 (metalfe-32023.830.2)"}}')
+    ident = f"!{meta_id}"
+    meta_id += 1
+    lines.append(f"!{meta_id} = !{{i32 2, i32 7, i32 0}}")
+    version = f"!{meta_id}"
+    meta_id += 1
+    lines.append(f'!{meta_id} = !{{!"Metal", i32 3, i32 2, i32 0}}')
+    lang = f"!{meta_id}"
+    meta_id += 1
+    lines.append(f'!{meta_id} = !{{!"input.ll"}}')
+    src = f"!{meta_id}"
+    meta_id += 1
+
+    # Top-level metadata references
+    result = [f"!air.kernel = !{{{kernel_node}}}", f"!air.compile_options = !{{{denorms}, {fastmath}, {fb}}}", f"!llvm.ident = !{{{ident}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{lang}}}", f"!air.source_file_name = !{{{src}}}", ""]
+    result.extend(lines)
+    return result
 
 
 def _rewrite_pointers(line: str, var_addrspaces: Dict[str, int]) -> str:
@@ -330,11 +415,17 @@ def to_air(llvm_ir_text: str) -> str:
     for intr in sorted(all_used_intrinsics):
         # We assume they are float in -> float out
         # e.g. declare float @air.exp.f32(float)
-        # Handle pow which is float, float -> float
+        # Handle different signatures:
+        # - pow, fmin, fmax: (float, float) -> float
+        # - fma: (float, float, float) -> float
+        # - others: (float) -> float
         ret_type = "float"
-        arg_types = "(float)"
-        if "pow" in intr:
+        if "pow" in intr or "fmin" in intr or "fmax" in intr:
             arg_types = "(float, float)"
+        elif "fma" in intr:
+            arg_types = "(float, float, float)"
+        else:
+            arg_types = "(float)"
 
         name_only = intr.replace("@", "")
         # Add pure attribute #2 (same as barrier for now or #0? Let's use #2 convergent nounwind willreturn which seems safe enough for math)
@@ -344,67 +435,6 @@ def to_air(llvm_ir_text: str) -> str:
     output_lines.append("attributes #2 = { convergent nounwind willreturn }")
 
     if func_name:
-        lines = []
-        meta_id = 0
-
-        def m(c):
-            nonlocal meta_id
-            lines.append(f"!{meta_id} = {c}")
-            meta_id += 1
-            return f"!{meta_id-1}"
-
-        arg_meta_refs = []
-        global_buffer_idx = 0
-        threadgroup_buffer_idx = 0
-
-        for idx, (at, an) in enumerate(args_list):
-            template, as_id = _get_air_metadata_content(at, an)
-            content = template
-            if "{loc_index}" in template:
-                if as_id == 3:
-                    buf_idx = threadgroup_buffer_idx
-                    threadgroup_buffer_idx += 1
-                else:
-                    buf_idx = global_buffer_idx
-                    global_buffer_idx += 1
-                content = content.replace("{loc_index}", str(buf_idx))
-
-            if "air.arg_name" not in content:
-                content += f', !"air.arg_name", !"{an}"'
-
-            arg_meta_refs.append(m(f"!{{i32 {idx}, {content}}}"))
-
-        empty = m("!{}")
-        meta_sig_parts = [x[0] for x in args_list]
-        sig_str = f"void ({', '.join(meta_sig_parts)})*"
-        lines.append(f"!{meta_id} = !{{{sig_str} @{func_name}, {empty}, !{{{', '.join(arg_meta_refs)}}}}}")
-        kernel_node = f"!{meta_id}"
-        meta_id += 1
-
-        # Standard AIR metadata
-        lines.append(f'!{meta_id} = !{{!"air.compile.denorms_disable"}}')
-        denorms = f"!{meta_id}"
-        meta_id += 1
-        lines.append(f'!{meta_id} = !{{!"air.compile.fast_math_enable"}}')
-        fastmath = f"!{meta_id}"
-        meta_id += 1
-        lines.append(f'!{meta_id} = !{{!"air.compile.framebuffer_fetch_enable"}}')
-        fb = f"!{meta_id}"
-        meta_id += 1
-        lines.append(f'!{meta_id} = !{{!"Apple metal version 32023.830 (metalfe-32023.830.2)"}}')
-        ident = f"!{meta_id}"
-        meta_id += 1
-        lines.append(f"!{meta_id} = !{{i32 2, i32 7, i32 0}}")
-        version = f"!{meta_id}"
-        meta_id += 1
-        lines.append(f'!{meta_id} = !{{!"Metal", i32 3, i32 2, i32 0}}')
-        lang = f"!{meta_id}"
-        meta_id += 1
-        lines.append(f'!{meta_id} = !{{!"input.ll"}}')
-        src = f"!{meta_id}"
-        meta_id += 1
-
-        output_lines.extend([f"!air.kernel = !{{{kernel_node}}}", f"!air.compile_options = !{{{denorms}, {fastmath}, {fb}}}", f"!llvm.ident = !{{{ident}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{lang}}}", f"!air.source_file_name = !{{{src}}}", ""])
-        output_lines.extend(lines)
+        output_lines.extend(_generate_metadata(func_name, args_list))
 
     return "\n".join(output_lines)
