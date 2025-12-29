@@ -96,20 +96,20 @@ class IRGen:
         # struct { double* ptr; int rows; int cols; }
         struct_type = llvm.LLVMStructType.from_type_list([llvm.LLVMPointerType(), i32, i32])
 
-        # Helper to create constants
+        # create constants
         c_rows = self.builder.insert(arith.ConstantOp(IntegerAttr(rows, i32))).results[0]
         c_cols = self.builder.insert(arith.ConstantOp(IntegerAttr(cols, i32))).results[0]
         c_size = self.builder.insert(arith.ConstantOp(IntegerAttr(rows * cols, i32))).results[0]
         c_elem_size = self.builder.insert(arith.ConstantOp(IntegerAttr(8, i32))).results[0]  # sizeof(double)
 
-        # Calculate bytes = rows * cols * 8
+        # calculate bytes = rows * cols * 8
         c_total_bytes_32 = self.builder.insert(arith.MuliOp(c_size, c_elem_size)).results[0]
         c_total_bytes = self.builder.insert(arith.ExtUIOp(c_total_bytes_32, i64)).results[0]  # malloc takes i64
 
-        # Call malloc
+        # call malloc
         ptr = self.builder.insert(llvm.CallOp(SymbolAttr("malloc"), c_total_bytes, return_type=llvm.LLVMPointerType())).results[0]
 
-        # Populate data if provided
+        # populate data if provided
         if data:
             for i, val in enumerate(data):
                 c_idx = self.builder.insert(arith.ConstantOp(IntegerAttr(i, i32))).results[0]
@@ -118,7 +118,7 @@ class IRGen:
                 gep = self.builder.insert(llvm.GEPOp(ptr, [llvm.GEP_USE_SSA_VAL], f64, ssa_indices=[c_idx])).results[0]
                 self.builder.insert(llvm.StoreOp(c_val, gep))
 
-        # Create struct on stack (or undefined value and insert)
+        # create struct on stack (or undefined value and insert)
         struct_type = llvm.LLVMStructType.from_type_list([llvm.LLVMPointerType(), i32, i32])
         struct_val = self.builder.insert(llvm.UndefOp(struct_type)).results[0]
         struct_val = self.builder.insert(llvm.InsertValueOp(DenseArrayBase.from_list(i64, [0]), struct_val, ptr)).results[0]
@@ -128,7 +128,7 @@ class IRGen:
         return struct_val
 
     def _matmul(self, lhs, rhs):
-        # Extract dims
+        # extract dims
         lhs_ptr = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [0]), lhs, llvm.LLVMPointerType())).results[0]
         lhs_rows = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [1]), lhs, i32)).results[0]
         lhs_cols = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [2]), lhs, i32)).results[0]
