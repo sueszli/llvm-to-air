@@ -29,7 +29,7 @@ def get_type_info(type_str: str) -> Tuple[str, int, int]:
     t = type_str.strip()
 
     # vector types: <N x type>
-    match = re.search(r"<(\d+)\s+x\s+([\w\d\.]+)>", t)
+    match = re.search(r"<\s*(\d+)\s+x\s+([\w\d\.]+)\s*>", t)
     if t.startswith("<") and t.endswith(">") and match:
         count = int(match.group(1))
         elem_type = match.group(2)
@@ -324,15 +324,15 @@ class SignatureParser:
     def _process_single_argument(a_type: str, clean_name: str, name_no_prefix: str, var_addrspaces: Dict[str, int], scalar_loads: Dict[str, str]) -> Tuple[str, bool, str]:
         # iterates through the function arguments and transforms them based on whether they are buffers (pointers) or scalars (values)
         if "*" in a_type or a_type == "ptr":
-            return SignatureParser._process_buffer_argument(a_type, clean_name, var_addrspaces)
+            return SignatureParser._process_buffer_argument(a_type, clean_name, name_no_prefix, var_addrspaces)
         return SignatureParser._process_scalar_argument(a_type, clean_name, name_no_prefix, var_addrspaces, scalar_loads)
 
     @staticmethod
-    def _process_buffer_argument(a_type: str, clean_name: str, var_addrspaces: Dict[str, int]) -> Tuple[str, bool, str]:
+    def _process_buffer_argument(a_type: str, clean_name: str, name_no_prefix: str, var_addrspaces: Dict[str, int]) -> Tuple[str, bool, str]:
         as_id = 3 if "shared" in clean_name else 1
         var_addrspaces[clean_name] = as_id
 
-        is_output = any(x in clean_name.lower() for x in ["out", "result"]) or clean_name in ["%C", "%c"]
+        is_output = any(x in clean_name.lower() for x in ["out", "result"]) or clean_name in ["%C", "%c"] or name_no_prefix in ["out", "result"]
 
         res_type = a_type
         if a_type == "ptr":  # default to float for opaque pointers

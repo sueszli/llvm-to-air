@@ -19,7 +19,7 @@ def compile_to_metallib(air_llvm_ir: str) -> bytes:
         f_ll.flush()
         cmd = f"xcrun -sdk macosx metal -x ir -c {f_ll.name} -o {f_air.name} && xcrun -sdk macosx metallib {f_air.name} -o {f_lib.name}"
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        assert result.returncode == 0, f"compilation failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}\nAIR CODE:\n{air_llvm_text}"
+        assert result.returncode == 0, f"compilation failed:\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
         lib_data = Path(f_lib.name).read_bytes()
         assert len(lib_data) > 0, "generated metallib is empty"
         return lib_data

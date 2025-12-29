@@ -1,0 +1,239 @@
+import sys
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+root_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root_dir))
+
+from src import air_to_metallib
+
+
+class TestAirToMetallib(unittest.TestCase):
+
+    @patch("src.air_to_metallib.subprocess.run")
+    @patch("src.air_to_metallib.Path")
+    @patch("src.air_to_metallib.tempfile.NamedTemporaryFile")
+    def test_compile_to_metallib_success(self, mock_tempfile, mock_path, mock_subprocess):
+        # setup mocks
+        mock_f_ll = MagicMock()
+        mock_f_ll.name = "/tmp/test.ll"
+        mock_f_air = MagicMock()
+        mock_f_air.name = "/tmp/test.air"
+        mock_f_lib = MagicMock()
+        mock_f_lib.name = "/tmp/test.metallib"
+
+        # context managers for tempfiles
+        mock_f_ll.__enter__.return_value = mock_f_ll
+        mock_f_air.__enter__.return_value = mock_f_air
+        mock_f_lib.__enter__.return_value = mock_f_lib
+
+        mock_tempfile.side_effect = [mock_f_ll, mock_f_air, mock_f_lib]
+
+        # subprocess result
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_subprocess.return_value = mock_result
+
+        # path read_bytes
+        mock_path_obj = MagicMock()
+        mock_path_obj.read_bytes.return_value = b"fake_metallib_content"
+        mock_path.return_value = mock_path_obj
+
+        # call
+        result = air_to_metallib.compile_to_metallib("fake_ir")
+
+        # assertions
+        self.assertEqual(result, b"fake_metallib_content")
+        mock_f_ll.write.assert_called_with(b"fake_ir")
+        mock_subprocess.assert_called_once()
+        cmd = mock_subprocess.call_args[0][0]
+        self.assertIn("xcrun -sdk macosx metal", cmd)
+        self.assertIn("xcrun -sdk macosx metallib", cmd)
+
+    @patch("src.air_to_metallib.subprocess.run")
+    @patch("src.air_to_metallib.tempfile.NamedTemporaryFile")
+    def test_compile_to_metallib_failure(self, mock_tempfile, mock_subprocess):
+        # setup mocks
+        mock_f_ll = MagicMock()
+        mock_f_ll.name = "/tmp/test.ll"
+        mock_f_air = MagicMock()
+        mock_f_air.name = "/tmp/test.air"
+        mock_f_lib = MagicMock()
+        mock_f_lib.name = "/tmp/test.metallib"
+
+        mock_f_ll.__enter__.return_value = mock_f_ll
+        mock_f_air.__enter__.return_value = mock_f_air
+        mock_f_lib.__enter__.return_value = mock_f_lib
+
+        mock_tempfile.side_effect = [mock_f_ll, mock_f_air, mock_f_lib]
+
+        # subprocess result
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stdout = "some error"
+        mock_result.stderr = "some stderr"
+        mock_subprocess.return_value = mock_result
+
+        # call and assert raises
+        with self.assertRaises(AssertionError) as cm:
+            air_to_metallib.compile_to_metallib("fake_ir")
+
+        self.assertIn("compilation failed", str(cm.exception))
+
+    @patch("src.air_to_metallib.subprocess.run")
+    @patch("src.air_to_metallib.Path")
+    @patch("src.air_to_metallib.tempfile.NamedTemporaryFile")
+    def test_compile_to_metallib_empty_output(self, mock_tempfile, mock_path, mock_subprocess):
+        # setup mocks
+        mock_f_ll = MagicMock()
+        mock_f_ll.name = "/tmp/test.ll"
+        mock_f_air = MagicMock()
+        mock_f_air.name = "/tmp/test.air"
+        mock_f_lib = MagicMock()
+        mock_f_lib.name = "/tmp/test.metallib"
+
+        mock_f_ll.__enter__.return_value = mock_f_ll
+        mock_f_air.__enter__.return_value = mock_f_air
+        mock_f_lib.__enter__.return_value = mock_f_lib
+
+        mock_tempfile.side_effect = [mock_f_ll, mock_f_air, mock_f_lib]
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_subprocess.return_value = mock_result
+
+        mock_path_obj = MagicMock()
+        mock_path_obj.read_bytes.return_value = b""  # Empty
+        mock_path.return_value = mock_path_obj
+
+        # call and assert raises
+        with self.assertRaises(AssertionError) as cm:
+            air_to_metallib.compile_to_metallib("fake_ir")
+
+        self.assertIn("generated metallib is empty", str(cm.exception))
+
+    @patch("src.air_to_metallib.Metal")
+    @patch("src.air_to_metallib.Foundation")
+    @patch("src.air_to_metallib.tempfile.NamedTemporaryFile")
+    @patch("os.path.exists")
+    @patch("os.remove")
+    def test_create_compute_pipeline_success(self, mock_remove, mock_exists, mock_tempfile, mock_foundation, mock_metal):
+        # mock metal device
+        mock_device = MagicMock()
+        mock_metal.MTLCreateSystemDefaultDevice.return_value = mock_device
+
+        # mock tempfile
+        mock_tmp = MagicMock()
+        mock_tmp.name = "/tmp/test.metallib"
+        mock_tempfile.return_value.__enter__.return_value = mock_tmp
+
+        # mock NSURL
+        mock_url = MagicMock()
+        mock_foundation.NSURL.fileURLWithPath_.return_value = mock_url
+
+        # mock library
+        mock_library = MagicMock()
+        mock_device.newLibraryWithURL_error_.return_value = (mock_library, None)
+
+        # mock function
+        mock_fn = MagicMock()
+        mock_library.newFunctionWithName_.return_value = mock_fn
+
+        # mock PSO
+        mock_pso = MagicMock()
+        mock_device.newComputePipelineStateWithFunction_error_.return_value = (mock_pso, None)
+
+        mock_exists.return_value = True
+
+        # call
+        device, pso = air_to_metallib.create_compute_pipeline(b"binary", "kernel_name")
+
+        # assertions
+        self.assertEqual(device, mock_device)
+        self.assertEqual(pso, mock_pso)
+        mock_tmp.write.assert_called_with(b"binary")
+        mock_device.newLibraryWithURL_error_.assert_called_with(mock_url, None)
+        mock_library.newFunctionWithName_.assert_called_with("kernel_name")
+        mock_device.newComputePipelineStateWithFunction_error_.assert_called_with(mock_fn, None)
+        mock_remove.assert_called_with("/tmp/test.metallib")
+
+    @patch("src.air_to_metallib.Metal")
+    def test_create_compute_pipeline_no_device(self, mock_metal):
+        mock_metal.MTLCreateSystemDefaultDevice.return_value = None
+        with self.assertRaises(AssertionError) as cm:
+            air_to_metallib.create_compute_pipeline(b"bin", "name")
+        self.assertIn("metal not supported", str(cm.exception))
+
+    @patch("src.air_to_metallib.Metal")
+    @patch("src.air_to_metallib.Foundation")
+    @patch("src.air_to_metallib.tempfile.NamedTemporaryFile")
+    @patch("os.path.exists")
+    @patch("os.remove")
+    def test_create_compute_pipeline_library_error(self, mock_remove, mock_exists, mock_tempfile, mock_foundation, mock_metal):
+        mock_device = MagicMock()
+        mock_metal.MTLCreateSystemDefaultDevice.return_value = mock_device
+
+        mock_tempfile.return_value.__enter__.return_value = MagicMock()
+
+        mock_device.newLibraryWithURL_error_.return_value = (None, "Some Error")
+
+        with self.assertRaises(AssertionError) as cm:
+            air_to_metallib.create_compute_pipeline(b"bin", "name")
+        self.assertIn("error loading library", str(cm.exception))
+
+    @patch("src.air_to_metallib.Metal")
+    @patch("src.air_to_metallib.Foundation")
+    @patch("src.air_to_metallib.tempfile.NamedTemporaryFile")
+    @patch("os.path.exists")
+    @patch("os.remove")
+    def test_create_compute_pipeline_function_not_found(self, mock_remove, mock_exists, mock_tempfile, mock_foundation, mock_metal):
+        mock_device = MagicMock()
+        mock_metal.MTLCreateSystemDefaultDevice.return_value = mock_device
+
+        mock_library = MagicMock()
+        mock_device.newLibraryWithURL_error_.return_value = (mock_library, None)
+
+        mock_library.newFunctionWithName_.return_value = None
+
+        with self.assertRaises(AssertionError) as cm:
+            air_to_metallib.create_compute_pipeline(b"bin", "kernel_name")
+        self.assertIn("function 'kernel_name' not found", str(cm.exception))
+
+    def test_execute_kernel(self):
+        mock_device = MagicMock()
+        mock_pso = MagicMock()
+        mock_grid_size = MagicMock()
+        mock_threadgroup_size = MagicMock()
+        mock_encode_args_fn = MagicMock()
+
+        mock_queue = MagicMock()
+        mock_device.newCommandQueue.return_value = mock_queue
+
+        mock_buffer = MagicMock()
+        mock_queue.commandBuffer.return_value = mock_buffer
+
+        mock_encoder = MagicMock()
+        mock_buffer.computeCommandEncoder.return_value = mock_encoder
+
+        mock_buffer.status.return_value = 0
+
+        with patch("src.air_to_metallib.Metal") as mock_metal:
+            mock_metal.MTLCommandBufferStatusCompleted = 1
+            mock_buffer.status.return_value = 1
+
+            air_to_metallib.execute_kernel(mock_device, mock_pso, mock_grid_size, mock_threadgroup_size, mock_encode_args_fn)
+
+            mock_device.newCommandQueue.assert_called()
+            mock_queue.commandBuffer.assert_called()
+            mock_buffer.computeCommandEncoder.assert_called()
+            mock_encoder.setComputePipelineState_.assert_called_with(mock_pso)
+            mock_encode_args_fn.assert_called_with(mock_encoder)
+            mock_encoder.dispatchThreads_threadsPerThreadgroup_.assert_called_with(mock_grid_size, mock_threadgroup_size)
+            mock_encoder.endEncoding.assert_called()
+            mock_buffer.commit.assert_called()
+            mock_buffer.waitUntilCompleted.assert_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -99,7 +99,7 @@ def _fix_mlir(mlir_text):
     arg_defs = args_content.split(",")
     mapping = {}
     for i, arg_def in enumerate(arg_defs):
-        arg_name = arg_def.strip().split(" ")[0]
+        arg_name = arg_def.strip().split(" ")[0].rstrip(":")
         target_name = f"%{i}"
         mapping[arg_name] = target_name
 
