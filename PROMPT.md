@@ -60,9 +60,7 @@ To avoid "messy code," you must enforce the following:
 
 ## Reference Pattern
 
-Make sure to look at everything implemented so far in `/test/*`. The goal is to cover all operations necessary to write a full tensor library for automatic differentiation with matmul, add, sub, mul, div and common activation functions with float32.
-
-If you feel confident, start implementing full algorithms like matmul and softmax to test multiple operations at once.
+Make sure to look at everything implemented so far in `/test/*`. The goal is to provide primitives for a full tensor library for automatic differentiation. Start implementing full algorithms like matmul, activation functions, etc. and really challenge the system with end to end implementations to their full extent.
 
 Target functionality (already implemented):
 
