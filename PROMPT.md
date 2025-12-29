@@ -36,13 +36,13 @@ You must strictly adhere to the Red -> Green -> Refactor cycle for every task.
 
 ---
 
-## Reference Pattern
+## Reference Test File
 
 Make sure to look at everything implemented so far in `/test/*`. The goal is to provide primitives for a full tensor library for automatic differentiation. Start implementing full algorithms like matmul, activation functions, etc. and really challenge the system with end to end implementations to their full extent.
 
 Target functionality (already implemented):
 
-```cpp
+```metal
 kernel void add(device const float* a [[buffer(0)]],
                 device float* b [[buffer(1)]],
                 uint id [[thread_position_in_grid]]) {
@@ -77,26 +77,3 @@ def test_add(binary_add):
     result = run_kernel_1d_float(binary_add, input_data, "add_kernel")
     assert result == pytest.approx(expected)
 ```
-
----
-
-## Code Quality Standards
-
-To avoid "messy code," you must enforce the following:
-
-1. Regex Hygiene: Avoid loose .* matches. Use specific capture groups. Comment complex regex patterns.
-2. Fail Fast: If an LLVM instruction is unrecognized, raise a clear NotImplementedError or descriptive exception rather than generating broken AIR code.
-3. Modularity: Do not write monolithic parsing loops. Break handlers for specific instructions (e.g., add, store, icmp) into distinct logical blocks or functions.
-4. Idempotency: Ensure the script produces deterministic output for the same input.
-
-- Obvious Code > Clever Code
-- Maximize Locality: Keep related code together. Define things near usage. Minimize variable scope.
-- Centralize Control Flow: Branching logic belongs in parents. leaf functions should be pure logic.
-- Guard Clauses: Handle checks first, return early, minimize nesting.
-- Functions: Do one coherent thing (ideally <70 lines). Prefer lambdas/inline logic over tiny single-use functions.
-- Decompose Conditionals: Use named variables to simplify complex `if` conditions.
-- Naming & Comments:
-    - Comments explain *why*, not *what*; use lowercase single lines. ASCII illustrations are welcome.
-- Paradigm Balance:
-    - Functional: Prefer pure functions (data in, data out) and immutability for logic.
-    - Procedural: Use direct loops and local mutation when simpler or significantly more performant.
