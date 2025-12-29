@@ -1,5 +1,3 @@
-# $ uv run ./demo.py
-#
 # /// script
 # dependencies = [
 #     "lark",
@@ -13,7 +11,8 @@ import ctypes
 import re
 import struct
 import subprocess
-import sys
+from functools import lru_cache
+from io import StringIO
 from pathlib import Path
 
 import Metal
@@ -21,10 +20,12 @@ from lark import Lark
 from xdsl.builder import Builder, InsertPoint
 from xdsl.dialects import arith, func, llvm, scf
 from xdsl.dialects.builtin import Block, FloatAttr, FunctionType, IntegerAttr, ModuleOp, f32, i32, i64
+from xdsl.printer import Printer
 
-# Add src and test dirs to path to import utils and llvm_to_air
+# add src and test dirs to path to import utils and llvm_to_air
 root_dir = Path(__file__).resolve().parent
 from src.air_to_metallib import compile_to_metallib, create_compute_pipeline, execute_kernel
+from src.llvm_to_air import to_air
 
 SOURCE = """
 (print
@@ -145,57 +146,45 @@ def fix_mlir(mlir_text):
     return fixed_text
 
 
+@lru_cache(None)
+def compile_matmul_kernel():
+    buf = StringIO()
+    Printer(stream=buf).print_op(gen_matmul_kernel())
+    mlir_source = fix_mlir(buf.getvalue())
+
+    cmd_opt = [
+        "mlir-opt",
+        "--convert-scf-to-cf",
+        "--convert-func-to-llvm",
+        "--convert-arith-to-llvm",
+        "--convert-cf-to-llvm",
+        "--reconcile-unrealized-casts",
+    ]
+    opt_proc = subprocess.run(cmd_opt, input=mlir_source, capture_output=True, text=True)
+    assert opt_proc.returncode == 0, f"mlir-opt failed:\n{opt_proc.stderr}"
+
+    cmd_trans = ["mlir-translate", "--mlir-to-llvmir"]
+    trans_proc = subprocess.run(cmd_trans, input=opt_proc.stdout, capture_output=True, text=True, check=True)
+    assert trans_proc.returncode == 0, f"mlir-translate failed:\n{trans_proc.stderr}"
+
+    air_llvm_text = to_air(trans_proc.stdout, kernel_overrides={"matmul": {"6": "global_id"}})
+    return compile_to_metallib(air_llvm_text)
+
+
 class Compiler:
-    def __init__(self):
-        self.matmul_binary = None
-
-    def compile_matmul_kernel(self):
-        if self.matmul_binary:
-            return self.matmul_binary
-
-        from io import StringIO
-
-        from xdsl.printer import Printer
-
-        buf = StringIO()
-        Printer(stream=buf).print_op(gen_matmul_kernel())
-        mlir_source = fix_mlir(buf.getvalue())
-
-        cmd_opt = [
-            "mlir-opt",
-            "--convert-scf-to-cf",
-            "--convert-func-to-llvm",
-            "--convert-arith-to-llvm",
-            "--convert-cf-to-llvm",
-            "--reconcile-unrealized-casts",
-        ]
-        opt_proc = subprocess.run(cmd_opt, input=mlir_source, capture_output=True, text=True)
-        if opt_proc.returncode != 0:
-            print(f"mlir-opt failed:\n{opt_proc.stderr}")
-            sys.exit(1)
-
-        cmd_trans = ["mlir-translate", "--mlir-to-llvmir"]
-        trans_proc = subprocess.run(cmd_trans, input=opt_proc.stdout, capture_output=True, text=True, check=True)
-
-        from src.llvm_to_air import to_air
-
-        air_llvm_text = to_air(trans_proc.stdout, kernel_overrides={"matmul": {"6": "global_id"}})
-        self.matmul_binary = compile_to_metallib(air_llvm_text)
-        return self.matmul_binary
-
     def run(self, tree: Lark):
         for expr in tree.children:
-            self.eval(expr)
+            self._eval(expr)
 
-    def eval(self, node):
+    def _eval(self, node):
         if node.data == "tensor_expr":
             return {"rows": int(node.children[0]), "cols": int(node.children[1]), "data": [float(val) for val in node.children[2:]]}
 
         if node.data == "matmul_expr":
-            return self.exec_matmul(self.eval(node.children[0]), self.eval(node.children[1]))
+            return self.exec_matmul(self._eval(node.children[0]), self._eval(node.children[1]))
 
         if node.data == "print_expr":
-            self.print_tensor(self.eval(node.children[0]))
+            self.print_tensor(self._eval(node.children[0]))
 
     def _create_metal_buffer(self, device, data, length=None):
         if length:
@@ -206,10 +195,10 @@ class Compiler:
 
     def exec_matmul(self, A, B):
         M, K, K_rhs, N = A["rows"], A["cols"], B["rows"], B["cols"]
-        assert K == K_rhs, f"Dimension mismatch: {M}x{K} @ {K_rhs}x{N}"
+        assert K == K_rhs, f"dimension mismatch: {M}x{K} @ {K_rhs}x{N}"
 
-        device, pso = create_compute_pipeline(self.compile_matmul_kernel(), "matmul")
-        # print(f"Running on Metal Device: {device.name()}")
+        device, pso = create_compute_pipeline(compile_matmul_kernel(), "matmul")
+        print(f"running on metal device: {device.name()}")
 
         buf_a = self._create_metal_buffer(device, A["data"])
         buf_b = self._create_metal_buffer(device, B["data"])
@@ -236,4 +225,5 @@ class Compiler:
 
 
 if __name__ == "__main__":
-    Compiler().run(Lark(GRAMMAR, start="start").parse(SOURCE))
+    ir = Lark(GRAMMAR, start="start").parse(SOURCE)
+    Compiler().run(ir)
