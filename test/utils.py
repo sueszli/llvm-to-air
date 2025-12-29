@@ -6,7 +6,6 @@ from pathlib import Path
 
 import Foundation
 import Metal
-import pytest
 
 # required so we can import from src
 root_dir = Path(__file__).resolve().parent.parent
@@ -29,25 +28,22 @@ def compile_to_metallib(llvm_ir: str) -> bytes:
 
 def run_kernel(metallib_binary: bytes, input_data: list[float], kernel_name: str) -> list[float]:
     device = Metal.MTLCreateSystemDefaultDevice()
-    if not device:
-        pytest.skip("Metal not supported on this device")
+    assert device, "metal not supported on this device"
 
     with tempfile.NamedTemporaryFile(suffix=".metallib", delete=False) as tmp:
         tmp.write(metallib_binary)
         tmp_path = tmp.name
 
-    try:
-        lib_url = Foundation.NSURL.fileURLWithPath_(tmp_path)
-        library, error = device.newLibraryWithURL_error_(lib_url, None)
-    finally:
-        os.remove(tmp_path)
+    lib_url = Foundation.NSURL.fileURLWithPath_(tmp_path)
+    library, error = device.newLibraryWithURL_error_(lib_url, None)
+    os.remove(tmp_path)
 
-    assert library, f"Error loading library: {error}"
+    assert library, f"error loading library: {error}"
     fn = library.newFunctionWithName_(kernel_name)
-    assert fn, f"Error: Function '{kernel_name}' not found."
+    assert fn, f"function '{kernel_name}' not found."
 
     pso, error = device.newComputePipelineStateWithFunction_error_(fn, None)
-    assert pso, f"Error creating pipeline state: {error}"
+    assert pso, f"error creating pipeline state: {error}"
 
     thread_count_items = len(input_data)
     raw_data_array = (ctypes.c_float * thread_count_items)(*input_data)
