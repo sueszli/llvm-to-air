@@ -228,23 +228,23 @@ class AirTranslator:
         return idx
 
     def _convert_instruction(self, line: str) -> str:
-        # 1. handle barrier
+        # handle barrier
         if "call" in line and "barrier" in line:
             return "  tail call void @air.wg.barrier(i32 2, i32 1) #2"
 
-        # 2. handle type casts
+        # handle type casts
         line = self._handle_type_casts(line)
 
-        # 3. handle intrinsics
+        # handle intrinsics
         line = self._replace_intrinsics(line)
 
-        # 4. rewrite pointers
+        # rewrite pointers
         line = self._rewrite_pointers(line)
 
-        # 5. propagate address spaces
+        # propagate address spaces
         self._propagate_address_spaces(line)
 
-        # 6. replace scalar loads
+        # replace scalar loads
         line = self._apply_scalar_loads(line)
 
         return line
