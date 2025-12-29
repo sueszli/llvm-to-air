@@ -199,15 +199,14 @@ def _validate_opcode(line: str) -> None:
         raise NotImplementedError(f"Unknown instruction: {opcode} in line: {line.strip()}")
 
 
-def _convert_instruction(line: str, var_addrspaces: Dict[str, int]) -> Tuple[str, Set[str]]:
-    """Converts a single LLVM IR instruction line to Metal AIR IR."""
-    used_intr = set()
-
-    # Handle barrier
+def _handle_barrier(line: str) -> Tuple[str, Set[str]] | None:
     if "call" in line and "barrier" in line:
-        return ("  tail call void @air.wg.barrier(i32 2, i32 1) #2", used_intr)
+        return ("  tail call void @air.wg.barrier(i32 2, i32 1) #2", set())
+    return None
 
-    # Handle intrinsics
+
+def _replace_intrinsics(line: str) -> Tuple[str, Set[str]]:
+    used_intr = set()
     if "call" in line:
         # replace llvm intrinsic calls with air equivalent
         # llvm.exp.f32 -> air.exp.f32
@@ -218,7 +217,10 @@ def _convert_instruction(line: str, var_addrspaces: Dict[str, int]) -> Tuple[str
             if llvm_intr in line:
                 line = line.replace(llvm_intr, air_intr)
                 used_intr.add(air_intr)
+    return line, used_intr
 
+
+def _rewrite_pointers(line: str, var_addrspaces: Dict[str, int]) -> str:
     def robust_replacer(m):
         type_part = m.group(1)
         var_part = m.group(2)
@@ -230,19 +232,39 @@ def _convert_instruction(line: str, var_addrspaces: Dict[str, int]) -> Tuple[str
         return m.group(0)
 
     # Replace pointers with addrspace pointers based on tracking
-    new_line = re.sub(r"([\w\s<>\.]+)\*\s+(%[\w\.\"]+)", robust_replacer, line)
+    return re.sub(r"([\w\s<>\.]+)\*\s+(%[\w\.\"]+)", robust_replacer, line)
 
-    # Propagate address space to result of getelementptr/bitcast
-    if "=" in new_line:
-        lhs_match = re.search(r"(%[\w\.\"]+)\s*=", new_line)
+
+def _propagate_address_spaces(line: str, var_addrspaces: Dict[str, int]) -> None:
+    # Propagate address space to result of getelementptr/bitcast/select
+    if "=" in line:
+        lhs_match = re.search(r"(%[\w\.\"]+)\s*=", line)
         if lhs_match:
             lhs_var = lhs_match.group(1)
             # Check if we just created an addrspace pointer
-            if "getelementptr" in new_line or "bitcast" in new_line:
-                as_match = re.search(r"addrspace\((\d+)\)\*", new_line)
+            if "getelementptr" in line or "bitcast" in line or "select" in line:
+                as_match = re.search(r"addrspace\((\d+)\)\*", line)
                 if as_match:
                     as_id = int(as_match.group(1))
                     var_addrspaces[lhs_var] = as_id
+
+
+def _convert_instruction(line: str, var_addrspaces: Dict[str, int]) -> Tuple[str, Set[str]]:
+    """Converts a single LLVM IR instruction line to Metal AIR IR."""
+
+    # Handle barrier
+    barrier_res = _handle_barrier(line)
+    if barrier_res:
+        return barrier_res
+
+    # Handle intrinsics
+    line, used_intr = _replace_intrinsics(line)
+
+    # Replace pointers with addrspace pointers based on tracking
+    new_line = _rewrite_pointers(line, var_addrspaces)
+
+    # Propagate address space to result of instructions
+    _propagate_address_spaces(new_line, var_addrspaces)
 
     return (new_line, used_intr)
 
