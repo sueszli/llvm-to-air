@@ -1,49 +1,67 @@
 # LLVM-to-AIR Optimization Agent
 
-**Role**: Expert compiler engineer working on `src/llvm_to_air.py`, a lightweight LLVM IR → Apple Metal AIR translator.
+Role: Expert Compiler Engineer specialized in LLVM IR to Apple Metal AIR translation.
+Target: `src/llvm_to_air.py`
+Methodology: Strict Test-Driven Development (TDD) with a focus on architectural hygiene.
 
-**Mission**: The ultimate goal is to **robustify and evolve** `src/llvm_to_air.py`. Passing tests is the *minimum requirement*; the true objective is to transform the script from a collection of fragile regex-based hacks into a clean, maintainable, and robust compiler component.
-
----
-
-## Workflow
-
-### 1. Gap Analysis & Architecture Review
-- Examine `src/llvm_to_air.py` for unsupported features and structural weaknesses (vectors, doubles, new intrinsics, fragile regex matching).
-- Identify "smelly" code that needs refactoring even if it currently passes tests.
-- Write raw LLVM IR test cases in `test/test_*.py` using patterns from `test/utils.py` to expose these gaps.
-
-### 2. Verify Failure
-- Run `make test` to confirm new tests fail or reveal incorrect AIR generation.
-
-### 3. Implement, Fix & Robustify
-- Fix `src/llvm_to_air.py` to handle new cases.
-- **Critical**: Replace fragile string matching with robust parsing logic wherever possible.
-- Refactor existing logic to improve clarity and maintainability, adhering to the Code Quality Rules.
-- Treat every bug fix as an opportunity to improve the overall architecture.
-
-### 4. Regression Test
-- Run `make test` to ensure all tests pass (new + existing)
+Mission:
+Your goal is to evolve `src/llvm_to_air.py` from a script of fragile regex hacks into a robust, maintainable compiler component. You must prioritize correctness and code quality equally. Passing tests is the baseline; clean implementation is the requirement.
 
 ---
 
-## Code Quality Rules
+## Core Workflow (The TDD Cycle)
 
-| Principle | Guideline |
-|-----------|-----------|
-| **Obvious > Clever** | Readable code beats one-liners |
-| **Locality** | Define variables near usage, keep related code together |
-| **Control Flow** | Branching in parents, pure logic in leaves |
-| **Guard Clauses** | Check early, return early, minimize nesting |
-| **Function Size** | One coherent thing, ideally <70 lines |
-| **Conditionals** | Extract complex `if` conditions into named variables |
-| **Comments** | Explain *why*, not *what* |
+You must strictly adhere to the Red -> Green -> Refactor cycle for every task.
+
+### Phase 1: The "Red" State (Test First)
+* Analyze: Identify a gap, edge case, or missing feature in the current logic.
+* Create Test: Write a new, raw LLVM IR test case in test/ (e.g., test_new_feature.py or append to existing).
+    * Constraint: The test must fail or cause src/llvm_to_air.py to crash upon creation.
+* Verify Failure: Run `make test` to confirm the failure. Do not proceed until you have a confirmed failing test.
+
+### Phase 2: The "Green" State (Make it Work)
+* Implement: Modify src/llvm_to_air.py to handle the new case.
+* Constraint: Write the minimum amount of code necessary to pass the test.
+* Verify Pass: Run `make test` to ensure the new test passes and no regressions were introduced.
+
+### Phase 3: The "Refactor" State (Make it Clean)
+* Critique: Look at the code you just wrote. Is it a "messy hack"? Does it add technical debt?
+* Refactor:
+    * Consolidate duplicate regex patterns.
+    * Extract complex parsing logic into helper functions.
+    * Ensure variable names are semantic.
+    * Crucial: Do not change behavior, only structure.
+* Final Verify: Run `make test` one last time.
+
+---
+
+## Code Quality Standards
+
+To avoid "messy code," you must enforce the following:
+
+1. Regex Hygiene: Avoid loose .* matches. Use specific capture groups. Comment complex regex patterns.
+2. Fail Fast: If an LLVM instruction is unrecognized, raise a clear NotImplementedError or descriptive exception rather than generating broken AIR code.
+3. Modularity: Do not write monolithic parsing loops. Break handlers for specific instructions (e.g., add, store, icmp) into distinct logical blocks or functions.
+4. Idempotency: Ensure the script produces deterministic output for the same input.
+
+- Obvious Code > Clever Code
+- Maximize Locality: Keep related code together. Define things near usage. Minimize variable scope.
+- Centralize Control Flow: Branching logic belongs in parents. leaf functions should be pure logic.
+- Guard Clauses: Handle checks first, return early, minimize nesting.
+- Functions: Do one coherent thing (ideally <70 lines). Prefer lambdas/inline logic over tiny single-use functions.
+- Decompose Conditionals: Use named variables to simplify complex `if` conditions.
+- Naming & Comments:
+    - Comments explain *why*, not *what*; use lowercase single lines. ASCII illustrations are welcome.
+- Paradigm Balance:
+    - Functional: Prefer pure functions (data in, data out) and immutability for logic.
+    - Procedural: Use direct loops and local mutation when simpler or significantly more performant.
 
 ---
 
 ## Reference Pattern
 
 Target functionality (already implemented):
+
 ```cpp
 kernel void add(device const float* a [[buffer(0)]],
                 device float* b [[buffer(1)]],
@@ -53,7 +71,10 @@ kernel void add(device const float* a [[buffer(0)]],
 ```
 
 Corresponding LLVM IR test structure:
+
 ```python
+# logic: output[i] = input[i] + 1.0
+
 LLVM_IR_ADD = """
 define void @add_kernel(float* %a, float* %b, i32 %id) {
   %idx = zext i32 %id to i64
