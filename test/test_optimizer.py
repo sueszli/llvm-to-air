@@ -4,30 +4,22 @@ import Metal
 import pytest
 from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib
 
-# ============================================================================
-# Basic SGD: params[i] -= learning_rate * gradients[i]
-# ============================================================================
-
+# params[i] -= learning_rate * gradients[i]
 LLVM_IR_SGD_BASIC = """
 define void @sgd_basic(float* %params, float* %gradients, float %learning_rate, i32 %global_id) {
 entry:
   %idx = zext i32 %global_id to i64
   
-  ; Load current parameter value
   %param_ptr = getelementptr inbounds float, float* %params, i64 %idx
   %param_val = load float, float* %param_ptr
   
-  ; Load gradient
   %grad_ptr = getelementptr inbounds float, float* %gradients, i64 %idx
   %grad_val = load float, float* %grad_ptr
   
-  ; Compute update: lr * grad
   %update = fmul float %learning_rate, %grad_val
   
-  ; Apply update: param -= lr * grad
   %new_param = fsub float %param_val, %update
   
-  ; Store updated parameter
   store float %new_param, float* %param_ptr
   
   ret void
@@ -36,7 +28,6 @@ entry:
 
 
 def run_sgd_basic(binary, params, gradients, learning_rate):
-    """Execute basic SGD kernel."""
     device, pso = _create_compute_pipeline(binary, "sgd_basic")
 
     def create_buffer(data):
@@ -60,7 +51,7 @@ def run_sgd_basic(binary, params, gradients, learning_rate):
 
     _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
-    # Read back updated parameters
+    # read back updated parameters
     output_ptr = buf_params.contents()
     output_buffer = output_ptr.as_buffer(len(params) * 4)
     results_view = memoryview(output_buffer).cast("f")
@@ -73,7 +64,6 @@ def binary_sgd_basic():
 
 
 def test_sgd_basic_simple(binary_sgd_basic):
-    """Test basic SGD update with simple values."""
     # params = [1.0, 2.0, 3.0, 4.0]
     # gradients = [0.1, 0.2, 0.3, 0.4]
     # lr = 0.1
@@ -92,7 +82,6 @@ def test_sgd_basic_simple(binary_sgd_basic):
 
 
 def test_sgd_basic_zero_gradients(binary_sgd_basic):
-    """Test SGD with zero gradients (no update)."""
     params = [1.0, 2.0, 3.0, 4.0]
     gradients = [0.0, 0.0, 0.0, 0.0]
     learning_rate = 0.1
@@ -104,7 +93,6 @@ def test_sgd_basic_zero_gradients(binary_sgd_basic):
 
 
 def test_sgd_basic_negative_gradients(binary_sgd_basic):
-    """Test SGD with negative gradients (parameters increase)."""
     params = [1.0, 2.0, 3.0, 4.0]
     gradients = [-0.1, -0.2, -0.3, -0.4]
     learning_rate = 0.1
@@ -118,41 +106,30 @@ def test_sgd_basic_negative_gradients(binary_sgd_basic):
     assert result == pytest.approx(expected, rel=1e-5)
 
 
-# ============================================================================
-# SGD with Momentum: velocity = momentum * velocity + grad; param -= lr * velocity
-# ============================================================================
-
+# sgd with momentum: velocity = momentum * velocity + grad; param -= lr * velocity
 LLVM_IR_SGD_MOMENTUM = """
 define void @sgd_momentum(float* %params, float* %gradients, float* %velocity, float %learning_rate, float %momentum, i32 %global_id) {
 entry:
   %idx = zext i32 %global_id to i64
   
-  ; Load current parameter value
   %param_ptr = getelementptr inbounds float, float* %params, i64 %idx
   %param_val = load float, float* %param_ptr
   
-  ; Load gradient
   %grad_ptr = getelementptr inbounds float, float* %gradients, i64 %idx
   %grad_val = load float, float* %grad_ptr
   
-  ; Load current velocity
   %vel_ptr = getelementptr inbounds float, float* %velocity, i64 %idx
   %vel_val = load float, float* %vel_ptr
   
-  ; Update velocity: velocity = momentum * velocity + gradient
   %momentum_term = fmul float %momentum, %vel_val
   %new_velocity = fadd float %momentum_term, %grad_val
   
-  ; Store updated velocity
   store float %new_velocity, float* %vel_ptr
   
-  ; Compute parameter update: lr * velocity
   %update = fmul float %learning_rate, %new_velocity
   
-  ; Apply update: param -= lr * velocity
   %new_param = fsub float %param_val, %update
   
-  ; Store updated parameter
   store float %new_param, float* %param_ptr
   
   ret void
@@ -161,7 +138,6 @@ entry:
 
 
 def run_sgd_momentum(binary, params, gradients, velocity, learning_rate, momentum):
-    """Execute SGD with momentum kernel."""
     device, pso = _create_compute_pipeline(binary, "sgd_momentum")
 
     def create_buffer(data):
@@ -189,7 +165,6 @@ def run_sgd_momentum(binary, params, gradients, velocity, learning_rate, momentu
 
     _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
-    # Read back updated parameters and velocity
     params_ptr = buf_params.contents()
     params_buffer = params_ptr.as_buffer(len(params) * 4)
     params_view = memoryview(params_buffer).cast("f")
@@ -207,17 +182,15 @@ def binary_sgd_momentum():
 
 
 def test_sgd_momentum_simple(binary_sgd_momentum):
-    """Test SGD with momentum."""
-    # Initial state
     params = [1.0, 2.0, 3.0, 4.0]
     gradients = [0.1, 0.2, 0.3, 0.4]
-    velocity = [0.0, 0.0, 0.0, 0.0]  # Start with zero velocity
+    velocity = [0.0, 0.0, 0.0, 0.0]
     learning_rate = 0.1
     momentum = 0.9
 
-    # Expected velocity: 0.9 * 0.0 + grad = grad
+    # expected velocity: 0.9 * 0.0 + grad = grad
     expected_velocity = [0.1, 0.2, 0.3, 0.4]
-    # Expected params: param - lr * velocity
+    # expected params: param - lr * velocity
     expected_params = [0.99, 1.98, 2.97, 3.96]
 
     result_params, result_velocity = run_sgd_momentum(binary_sgd_momentum, params, gradients, velocity, learning_rate, momentum)
@@ -227,20 +200,13 @@ def test_sgd_momentum_simple(binary_sgd_momentum):
 
 
 def test_sgd_momentum_with_existing_velocity(binary_sgd_momentum):
-    """Test SGD with momentum when velocity is non-zero."""
     params = [1.0, 2.0, 3.0, 4.0]
     gradients = [0.1, 0.2, 0.3, 0.4]
-    velocity = [0.05, 0.1, 0.15, 0.2]  # Non-zero initial velocity
+    velocity = [0.05, 0.1, 0.15, 0.2]
     learning_rate = 0.1
     momentum = 0.9
 
-    # Expected velocity: 0.9 * velocity + grad
-    # = [0.9*0.05 + 0.1, 0.9*0.1 + 0.2, 0.9*0.15 + 0.3, 0.9*0.2 + 0.4]
-    # = [0.145, 0.29, 0.435, 0.58]
     expected_velocity = [0.145, 0.29, 0.435, 0.58]
-
-    # Expected params: param - lr * new_velocity
-    # = [1.0 - 0.0145, 2.0 - 0.029, 3.0 - 0.0435, 4.0 - 0.058]
     expected_params = [0.9855, 1.971, 2.9565, 3.942]
 
     result_params, result_velocity = run_sgd_momentum(binary_sgd_momentum, params, gradients, velocity, learning_rate, momentum)
@@ -249,10 +215,7 @@ def test_sgd_momentum_with_existing_velocity(binary_sgd_momentum):
     assert result_velocity == pytest.approx(expected_velocity, rel=1e-5)
 
 
-# ============================================================================
-# SGD with Weight Decay: params[i] -= lr * (gradients[i] + weight_decay * params[i])
-# ============================================================================
-
+# sgd with weigh decay: params[i] -= lr * (gradients[i] + weight_decay * params[i])
 LLVM_IR_SGD_WEIGHT_DECAY = """
 define void @sgd_weight_decay(float* %params, float* %gradients, float %learning_rate, float %weight_decay, i32 %global_id) {
 entry:
@@ -287,7 +250,6 @@ entry:
 
 
 def run_sgd_weight_decay(binary, params, gradients, learning_rate, weight_decay):
-    """Execute SGD with weight decay kernel."""
     device, pso = _create_compute_pipeline(binary, "sgd_weight_decay")
 
     def create_buffer(data):
@@ -313,7 +275,6 @@ def run_sgd_weight_decay(binary, params, gradients, learning_rate, weight_decay)
 
     _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
-    # Read back updated parameters
     output_ptr = buf_params.contents()
     output_buffer = output_ptr.as_buffer(len(params) * 4)
     results_view = memoryview(output_buffer).cast("f")
@@ -326,17 +287,10 @@ def binary_sgd_weight_decay():
 
 
 def test_sgd_weight_decay_simple(binary_sgd_weight_decay):
-    """Test SGD with weight decay (L2 regularization)."""
     params = [1.0, 2.0, 3.0, 4.0]
     gradients = [0.1, 0.2, 0.3, 0.4]
     learning_rate = 0.1
     weight_decay = 0.01
-
-    # Effective gradient: grad + weight_decay * param
-    # = [0.1 + 0.01*1.0, 0.2 + 0.01*2.0, 0.3 + 0.01*3.0, 0.4 + 0.01*4.0]
-    # = [0.11, 0.22, 0.33, 0.44]
-    # Update: param - lr * effective_grad
-    # = [1.0 - 0.011, 2.0 - 0.022, 3.0 - 0.033, 4.0 - 0.044]
     expected = [0.989, 1.978, 2.967, 3.956]
 
     result = run_sgd_weight_decay(binary_sgd_weight_decay, params, gradients, learning_rate, weight_decay)
@@ -344,13 +298,11 @@ def test_sgd_weight_decay_simple(binary_sgd_weight_decay):
 
 
 def test_sgd_weight_decay_zero_decay(binary_sgd_weight_decay):
-    """Test that weight_decay=0 behaves like basic SGD."""
     params = [1.0, 2.0, 3.0, 4.0]
     gradients = [0.1, 0.2, 0.3, 0.4]
     learning_rate = 0.1
     weight_decay = 0.0
 
-    # Should be identical to basic SGD
     expected = [0.99, 1.98, 2.97, 3.96]
 
     result = run_sgd_weight_decay(binary_sgd_weight_decay, params, gradients, learning_rate, weight_decay)
