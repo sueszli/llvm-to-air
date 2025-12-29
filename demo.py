@@ -284,13 +284,7 @@ class IRGen:
             array_value = ArrayAttr([IntegerAttr(byte, builtin.i8) for byte in string_data])
 
             # create global string constant
-            global_op = llvm.GlobalOp(
-                array_type,
-                StringAttr(global_name),
-                linkage=llvm.LinkageAttr("internal"),
-                constant=True,
-                value=array_value
-            )
+            global_op = llvm.GlobalOp(array_type, StringAttr(global_name), linkage=llvm.LinkageAttr("internal"), constant=True, value=array_value)
             # insert global at beginning of module
             self.module.body.blocks[0].insert_op_before(global_op, self.module.body.blocks[0].first_op)
 
