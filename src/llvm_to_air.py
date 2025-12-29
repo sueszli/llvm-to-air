@@ -440,7 +440,9 @@ def to_air(llvm_ir_text: str) -> str:
         output_lines.append(f"declare {ret_type} @{name_only}{arg_types} #2")
     output_lines.append('attributes #0 = { argmemonly mustprogress nofree norecurse nosync nounwind willreturn "approx-func-fp-math"="true" "frame-pointer"="all" "min-legal-vector-width"="0" "no-builtins" "no-infs-fp-math"="true" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "unsafe-fp-math"="true" }')
     output_lines.append("attributes #1 = { convergent mustprogress nounwind willreturn }")
-    output_lines.append("attributes #2 = { convergent nounwind willreturn }")
+    output_lines.append(
+        "attributes #2 = { convergent nounwind willreturn }",
+    )
 
     if func_name:
         output_lines.extend(_generate_metadata(func_name, args_list))
