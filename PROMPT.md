@@ -7,6 +7,8 @@ Methodology: Strict Test-Driven Development (TDD) with a focus on architectural 
 Mission:
 Your goal is to evolve `src/llvm_to_air.py` from a script of fragile regex hacks into a robust, maintainable compiler component. You must prioritize correctness and code quality equally. Passing tests is the baseline; clean implementation is the requirement.
 
+Make sure to look at everything implemented so far in `/test/*`. The goal is to provide primitives for a full tensor library for automatic differentiation. Start implementing full algorithms. Study `test/test_matmul.py` for reference.
+
 ---
 
 ## Core Workflow (The TDD Cycle)
@@ -33,47 +35,3 @@ You must strictly adhere to the Red -> Green -> Refactor cycle for every task.
     * Ensure variable names are semantic.
     * Crucial: Do not change behavior, only structure.
 * Final Verify: Run `make test` one last time.
-
----
-
-## Reference Test File
-
-Make sure to look at everything implemented so far in `/test/*`. The goal is to provide primitives for a full tensor library for automatic differentiation. Start implementing full algorithms like matmul, activation functions, etc. and really challenge the system with end to end implementations to their full extent.
-
-Target functionality (already implemented):
-
-```metal
-kernel void add(device const float* a [[buffer(0)]],
-                device float* b [[buffer(1)]],
-                uint id [[thread_position_in_grid]]) {
-    b[id] = a[id] + 1.0f;
-}
-```
-
-Corresponding LLVM IR test structure:
-
-```python
-# logic: output[i] = input[i] + 1.0
-
-LLVM_IR_ADD = """
-define void @add_kernel(float* %a, float* %b, i32 %id) {
-  %idx = zext i32 %id to i64
-  %ptr_in = getelementptr inbounds float, float* %a, i64 %idx
-  %val = load float, float* %ptr_in
-  %res = fadd float %val, 1.0
-  %ptr_out = getelementptr inbounds float, float* %b, i64 %idx
-  store float %res, float* %ptr_out
-  ret void
-}
-"""
-
-@pytest.fixture(scope="module")
-def binary_add():
-    return compile_to_metallib(LLVM_IR_ADD)
-
-def test_add(binary_add):
-    input_data = [0.0, 1.0, 2.0]
-    expected = [1.0, 2.0, 3.0]
-    result = run_kernel_1d_float(binary_add, input_data, "add_kernel")
-    assert result == pytest.approx(expected)
-```
