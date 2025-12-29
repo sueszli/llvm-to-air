@@ -234,6 +234,30 @@ class TestAirToMetallib(unittest.TestCase):
             mock_buffer.commit.assert_called()
             mock_buffer.waitUntilCompleted.assert_called()
 
+    def test_execute_kernel_failure(self):
+        mock_device = MagicMock()
+        mock_pso = MagicMock()
+        mock_grid_size = MagicMock()
+        mock_threadgroup_size = MagicMock()
+        mock_encode_args_fn = MagicMock()
 
-if __name__ == "__main__":
-    unittest.main()
+        mock_queue = MagicMock()
+        mock_device.newCommandQueue.return_value = mock_queue
+
+        mock_buffer = MagicMock()
+        mock_queue.commandBuffer.return_value = mock_buffer
+
+        mock_encoder = MagicMock()
+        mock_buffer.computeCommandEncoder.return_value = mock_encoder
+
+        # simulate failure
+        with patch("src.air_to_metallib.Metal") as mock_metal:
+            mock_metal.MTLCommandBufferStatusCompleted = 1
+            mock_buffer.status.return_value = 2
+            mock_buffer.error.return_value = "GPU Fault"
+
+            with self.assertRaises(AssertionError) as cm:
+                air_to_metallib.execute_kernel(mock_device, mock_pso, mock_grid_size, mock_threadgroup_size, mock_encode_args_fn)
+
+            self.assertIn("command buffer failed with status 2", str(cm.exception))
+            self.assertIn("GPU Fault", str(cm.exception))
