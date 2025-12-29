@@ -392,7 +392,7 @@ class AirTranslator:
                 content = template
 
                 if "{loc_index}" in template:
-                    # Logic: Global(1) and Constant(2) share index. Threadgroup(3) separate.
+                    # logic: Global(1) and Constant(2) share index. Threadgroup(3) separate.
                     link_id = 1 if as_id in [1, 2] else 3
                     content = content.replace("{loc_index}", str(loc_indices[link_id]))
                     loc_indices[link_id] += 1
