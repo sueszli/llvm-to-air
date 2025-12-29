@@ -38,9 +38,7 @@ NUMBER: /-?\d+(\.\d+)?/
 
 class IRGen:
     def __init__(self):
-        # create new empty module
         self.module = ModuleOp([])
-        # create builder pointing to end of module
         self.builder = Builder(InsertPoint.at_end(self.module.body.blocks[0]))
         # cache for string globals
         self.str_cache = {}
@@ -56,14 +54,12 @@ class IRGen:
         self.builder.insert(llvm.FuncOp("printf", llvm.LLVMFunctionType([llvm.LLVMPointerType()], i32, is_variadic=True), linkage=llvm.LinkageAttr("external")))
 
     def gen(self, tree: Lark) -> ModuleOp:
-        # create entry block for main function
+        # entry block for main function, with i32 return type
         entry_block = Block()
-        # create main function with i32 return type
         main_func = func.FuncOp("main", FunctionType.from_lists([], [i32]), Region(entry_block))
-        # add main function to module
         self.module.body.blocks[0].add_op(main_func)
 
-        # save previous builder and point new one to main function body
+        # enter main function scope
         prev_builder = self.builder
         self.builder = Builder(InsertPoint.at_end(entry_block))
 
@@ -71,37 +67,30 @@ class IRGen:
         for expr in tree.children:
             self._gen_expr(expr)
 
-        # create zero constant for return
-        zero = self.builder.insert(arith.ConstantOp(IntegerAttr(0, i32))).results[0]
         # return 0 from main
-        self.builder.insert(func.ReturnOp(zero))
+        zero_const = self.builder.insert(arith.ConstantOp(IntegerAttr(0, i32))).results[0]
+        self.builder.insert(func.ReturnOp(zero_const))
 
-        # restore builder to previous insertion point
+        # restore builder, leave main function scope
         self.builder = prev_builder
 
         return self.module
 
     def _gen_expr(self, node):
         if node.data == "tensor_expr":
-            # parse rows/cols/data from parse tree
             rows = int(node.children[0])
             cols = int(node.children[1])
             data = [float(val) for val in node.children[2:]]
-            # verify data size matches dimensions
             assert len(data) == rows * cols, "data length mismatch with shape"
             return self._create_tensor(rows, cols, data)
 
         if node.data == "matmul_expr":
-            # recursively generate ir for lhs and rhs operands
-            lhs = self._gen_expr(node.children[0])
+            lhs = self._gen_expr(node.children[0])  # recurse
             rhs = self._gen_expr(node.children[1])
-            # generate matmul code
             return self._matmul(lhs, rhs)
 
         if node.data == "print_expr":
-            # generate code for tensor to print
             val = self._gen_expr(node.children[0])
-            # call print helper
             self._print_tensor(val)
             return None
 
