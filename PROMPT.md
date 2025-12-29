@@ -7,7 +7,7 @@ Methodology: Strict Test-Driven Development (TDD) with a focus on architectural 
 Mission:
 Your goal is to evolve `src/llvm_to_air.py` from a script of fragile regex hacks into a robust, maintainable compiler component. You must prioritize correctness and code quality equally. Passing tests is the baseline; clean implementation is the requirement.
 
-Make sure to look at everything implemented so far in `/test/*`. The goal is to provide primitives for a full tensor library for automatic differentiation. Start implementing full algorithms. Study `test/test_matmul.py` for reference.
+Make sure to look at everything implemented so far in `/test/*`. The goal is to provide primitives for a full tensor library for automatic differentiation. Start implementing full algorithms. Study `test/test_matmul.py` for reference. Try to come up with something that is easily parallelisable and suitable for GPU acceleration.
 
 ## Core Workflow (The TDD Cycle)
 
@@ -29,10 +29,14 @@ You must strictly adhere to the Red -> Green -> Refactor cycle for every task.
 
 ```bash
 cat > /tmp/experiment.metal << 'EOF'
-kernel void test(device float* out [[buffer(0)]], 
-                 constant int& val [[buffer(1)]],
-                 uint id [[thread_position_in_grid]]) {
-    out[id] = float(val);
+#include <metal_stdlib>
+using namespace metal;
+
+// parallel computation!
+kernel void add(device const float* a [[buffer(0)]],
+                device float* b [[buffer(1)]],
+                uint id [[thread_position_in_grid]]) {
+    b[id] = a[id] + 1.0f;
 }
 EOF
 xcrun -sdk macosx metal -c /tmp/experiment.metal -o /tmp/experiment.air
