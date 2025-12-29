@@ -1,9 +1,7 @@
 import os
-import platform
 import shutil
 import subprocess
 import tempfile
-from os import system
 from pathlib import Path
 from typing import Callable
 
@@ -16,9 +14,14 @@ import Metal
 
 
 def compile_to_metallib(air_llvm_ir: str) -> bytes:
-    assert system("xcrun --version") == 0, "xcrun not found"
-    assert system("xcrun -sdk macosx metal --version") == 0, "metal not found"
-    assert system("xcrun -sdk macosx metallib --version") == 0, "metallib not found"
+    assert shutil.which("xcrun") is not None, "xcrun not found"
+
+    # Verify metal and metallib are available via xcrun
+    metal_check = subprocess.run(["xcrun", "-sdk", "macosx", "metal", "--version"], capture_output=True)
+    assert metal_check.returncode == 0, "metal not found"
+
+    metallib_check = subprocess.run(["xcrun", "-sdk", "macosx", "metallib", "--version"], capture_output=True)
+    assert metallib_check.returncode == 0, "metallib not found"
 
     assert air_llvm_ir
     with tempfile.NamedTemporaryFile(suffix=".ll") as f_ll, tempfile.NamedTemporaryFile(suffix=".air") as f_air, tempfile.NamedTemporaryFile(suffix=".metallib") as f_lib:
@@ -30,27 +33,6 @@ def compile_to_metallib(air_llvm_ir: str) -> bytes:
         lib_data = Path(f_lib.name).read_bytes()
         assert len(lib_data) > 0, "generated metallib is empty"
         return lib_data
-
-
-def get_mac_version() -> str:
-    mac_version = platform.mac_ver()[0]
-    if not mac_version:
-        return "14.0.0"
-    return mac_version
-
-
-def get_metal_version() -> str:
-    default_version = "Apple metal version 32023.830 (metalfe-32023.830.2)"
-    metal_path = shutil.which("metal")
-    if not metal_path:
-        return default_version
-    result = subprocess.run([metal_path, "--version"], capture_output=True, text=True)
-    if result.returncode != 0:
-        return default_version
-    first_line = result.stdout.splitlines()[0]
-    if "Apple metal version" in first_line:
-        return first_line.strip()
-    return default_version
 
 
 #

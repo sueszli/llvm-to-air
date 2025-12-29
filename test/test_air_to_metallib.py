@@ -46,7 +46,9 @@ class TestAirToMetallib(unittest.TestCase):
         # assertions
         self.assertEqual(result, b"fake_metallib_content")
         mock_f_ll.write.assert_called_with(b"fake_ir")
-        mock_subprocess.assert_called_once()
+        # Now called 3 times: metal check, metallib check, compilation
+        self.assertEqual(mock_subprocess.call_count, 3)
+        # Check the compilation call (last one)
         cmd = mock_subprocess.call_args[0][0]
         self.assertIn("xcrun -sdk macosx metal", cmd)
         self.assertIn("xcrun -sdk macosx metallib", cmd)
@@ -68,18 +70,18 @@ class TestAirToMetallib(unittest.TestCase):
 
         mock_tempfile.side_effect = [mock_f_ll, mock_f_air, mock_f_lib]
 
-        # subprocess result
+        # subprocess result - first call (metal check) fails
         mock_result = MagicMock()
         mock_result.returncode = 1
         mock_result.stdout = "some error"
         mock_result.stderr = "some stderr"
         mock_subprocess.return_value = mock_result
 
-        # call and assert raises
+        # call and assert raises - should fail on metal check
         with self.assertRaises(AssertionError) as cm:
             air_to_metallib.compile_to_metallib("fake_ir")
 
-        self.assertIn("compilation failed", str(cm.exception))
+        self.assertIn("metal not found", str(cm.exception))
 
     @patch("src.air_to_metallib.subprocess.run")
     @patch("src.air_to_metallib.Path")

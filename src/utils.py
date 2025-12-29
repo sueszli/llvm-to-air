@@ -7,77 +7,53 @@ import tempfile
 
 
 def get_mac_version() -> str:
-    """
-    Retrieves the macOS version (major.minor.patch).
-    Defaults to 14.0.0 if retrieval fails.
-    """
-    ver = platform.mac_ver()[0]
-    if not ver:
+    mac_version = platform.mac_ver()[0]
+    if not mac_version:
         return "14.0.0"
-    return ver
+    return mac_version
 
 
 def get_metal_version() -> str:
-    """
-    Retrieves the installed Metal compiler version string.
-    Falls back to a default if not found.
-    """
     default_version = "Apple metal version 32023.830 (metalfe-32023.830.2)"
-    try:
-        metal_path = shutil.which("metal")
-        if metal_path:
-            # Run metal --version
-            result = subprocess.run([metal_path, "--version"], capture_output=True, text=True)
-            if result.returncode == 0:
-                # First line example: "Apple metal version 32023.830 (metalfe-32023.830.2)"
-                first_line = result.stdout.splitlines()[0]
-                if "Apple metal version" in first_line:
-                    return first_line.strip()
-    except Exception:
-        pass
+    metal_path = shutil.which("metal")
+    if not metal_path:
+        return default_version
+    result = subprocess.run([metal_path, "--version"], capture_output=True, text=True)
+    if result.returncode != 0:
+        return default_version
+    first_line = result.stdout.splitlines()[0]
+    if "Apple metal version" in first_line:
+        return first_line.strip()
     return default_version
 
 
 def get_target_datalayout() -> str:
-    """
-    Retrieves the correct target datalayout string by querying the metal compiler.
-    Falls back to a hardcoded default for Apple Silicon if retrieval fails.
-    """
-    # Default for Apple Silicon (M1/M2/M3)
+    # datalayout string by querying the metal compiler.
     default_layout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"
 
-    try:
-        metal_path = shutil.which("metal")
-        if not metal_path:
-            return default_layout
+    metal_path = shutil.which("metal")
+    if not metal_path:
+        return default_layout
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            src_path = os.path.join(temp_dir, "test.metal")
-            out_path = os.path.join(temp_dir, "test.ll")
+    with tempfile.TemporaryDirectory() as temp_dir:
+        src_path = os.path.join(temp_dir, "test.metal")
+        out_path = os.path.join(temp_dir, "test.ll")
 
-            with open(src_path, "w") as f:
-                f.write("kernel void empty() {}")
+        with open(src_path, "w") as f:
+            f.write("kernel void empty() {}")
 
-            # Run metal -S -emit-llvm
-            # We use xcrun to ensure SDK paths are correct if possible, or just call metal directly
-            cmd = ["xcrun", "-sdk", "macosx", "metal", "-S", "-emit-llvm", src_path, "-o", out_path]
-            # Fallback to direct call if xcrun fails or isn't preferred
-            if not shutil.which("xcrun"):
-                cmd = [metal_path, "-S", "-emit-llvm", src_path, "-o", out_path]
+        cmd = ["xcrun", "-sdk", "macosx", "metal", "-S", "-emit-llvm", src_path, "-o", out_path]
+        if not shutil.which("xcrun"):
+            cmd = [metal_path, "-S", "-emit-llvm", src_path, "-o", out_path]
 
-            subprocess.run(cmd, check=True, capture_output=True)
-
-            if os.path.exists(out_path):
-                with open(out_path, "r") as f:
-                    for line in f:
-                        if line.strip().startswith("target datalayout ="):
-                            # Extract content between quotes
-                            match = re.search(r'"([^"]+)"', line)
-                            if match:
-                                return match.group(1)
-    except Exception:
-        pass
-
+        subprocess.run(cmd, check=True, capture_output=True)
+        if os.path.exists(out_path):
+            with open(out_path, "r") as f:
+                for line in f:
+                    if line.strip().startswith("target datalayout ="):
+                        match = re.search(r'"([^"]+)"', line)
+                        if match:
+                            return match.group(1)
     return default_layout
 
 
