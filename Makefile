@@ -15,3 +15,7 @@ venv:
 	uv venv .venv --python 3.11
 	uv pip install -r requirements.txt
 	@echo "activate venv with: \033[1;33msource .venv/bin/activate\033[0m"
+
+.PHONY: up
+up:
+	make fmt && make test && git add . && git commit -m up && git push
