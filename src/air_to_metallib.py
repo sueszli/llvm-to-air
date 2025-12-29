@@ -1,4 +1,6 @@
 import os
+import platform
+import shutil
 import subprocess
 import tempfile
 from os import system
@@ -28,6 +30,27 @@ def compile_to_metallib(air_llvm_ir: str) -> bytes:
         lib_data = Path(f_lib.name).read_bytes()
         assert len(lib_data) > 0, "generated metallib is empty"
         return lib_data
+
+
+def get_mac_version() -> str:
+    mac_version = platform.mac_ver()[0]
+    if not mac_version:
+        return "14.0.0"
+    return mac_version
+
+
+def get_metal_version() -> str:
+    default_version = "Apple metal version 32023.830 (metalfe-32023.830.2)"
+    metal_path = shutil.which("metal")
+    if not metal_path:
+        return default_version
+    result = subprocess.run([metal_path, "--version"], capture_output=True, text=True)
+    if result.returncode != 0:
+        return default_version
+    first_line = result.stdout.splitlines()[0]
+    if "Apple metal version" in first_line:
+        return first_line.strip()
+    return default_version
 
 
 #
