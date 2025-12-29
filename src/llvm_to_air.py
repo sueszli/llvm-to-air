@@ -1,3 +1,4 @@
+import platform
 import re
 from typing import Dict, List, Set, Tuple
 
@@ -365,7 +366,9 @@ def _convert_instruction(line: str, var_addrspaces: Dict[str, int]) -> Tuple[str
 def to_air(llvm_ir_text: str) -> str:
     output_lines = []
     output_lines.append('target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"')
-    output_lines.append('target triple = "air64_v27-apple-macosx15.0.0"\n')
+    assert platform.system() == "Darwin"
+    mac_version = platform.mac_ver()[0]
+    output_lines.append(f'target triple = "air64_v27-apple-macosx{mac_version}"\n')
 
     lines = llvm_ir_text.splitlines()
     i = 0
