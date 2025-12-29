@@ -22,7 +22,7 @@ from xdsl.dialects import arith, func, llvm, scf
 from xdsl.dialects.builtin import Block, FloatAttr, FunctionType, IntegerAttr, ModuleOp, f32, i32, i64
 from xdsl.printer import Printer
 
-root_dir = Path(__file__).resolve().parent
+Path(__file__).resolve().parent
 from src.air_to_metallib import compile_to_metallib, create_compute_pipeline, execute_kernel
 from src.llvm_to_air import to_air
 
