@@ -1,7 +1,7 @@
 import pytest
 from utils import compile_to_metallib, run_kernel
 
-LLVM_IR = """
+LLVM = """
 target triple = "unknown-unknown-unknown"
 
 declare void @"barrier"()
@@ -29,7 +29,7 @@ entry:
 
 @pytest.fixture(scope="module")
 def binary():
-    return compile_to_metallib(LLVM_IR)
+    return compile_to_metallib(LLVM)
 
 
 def test_basic_swap(binary):
