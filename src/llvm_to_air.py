@@ -34,7 +34,7 @@ def _get_type_info(type_str: str) -> Tuple[str, int, int]:
     return ("void", 0, 0)
 
 
-def _get_air_metadata_content(arg_type: str, arg_name: str) -> Tuple[str, int]:
+def _get_air_metadata_content(arg_type: str, arg_name: str, is_output: bool = False) -> Tuple[str, int]:
     """
     Returns (metadata_content_template, address_space_id)
     The template contains {loc_index} placeholder.
@@ -55,11 +55,23 @@ def _get_air_metadata_content(arg_type: str, arg_name: str) -> Tuple[str, int]:
         base_name, size, align = _get_type_info(base_t_str)
 
         addr_space_id = 1
-        if "addrspace(3)" in arg_type:
+        if "addrspace(2)" in arg_type:
+            addr_space_id = 2
+        elif "addrspace(3)" in arg_type:
             addr_space_id = 3
 
-        # We put a placeholder {loc_index}
-        meta = f'!"air.buffer", !"air.location_index", i32 {{loc_index}}, i32 1, !"air.read_write", !"air.address_space", i32 {addr_space_id}, !"air.arg_type_size", i32 {size}, !"air.arg_type_align_size", i32 {align}, !"air.arg_type_name", !"{base_name}"'
+        # Determine read/write access
+        access_mode = '!"air.read_write"'
+        if addr_space_id == 2:  # Constant buffers are read-only
+            access_mode = '!"air.read"'
+        elif not is_output:  # Input buffers are read-only unless marked as output
+            access_mode = '!"air.read"'
+
+        # For constant buffers (addrspace 2), include buffer_size
+        if addr_space_id == 2:
+            meta = f'!"air.buffer", !"air.buffer_size", i32 {size}, !"air.location_index", i32 {{loc_index}}, i32 1, {access_mode}, !"air.address_space", i32 {addr_space_id}, !"air.arg_type_size", i32 {size}, !"air.arg_type_align_size", i32 {align}, !"air.arg_type_name", !"{base_name}"'
+        else:
+            meta = f'!"air.buffer", !"air.location_index", i32 {{loc_index}}, i32 1, {access_mode}, !"air.address_space", i32 {addr_space_id}, !"air.arg_type_size", i32 {size}, !"air.arg_type_align_size", i32 {align}, !"air.arg_type_name", !"{base_name}"'
         return (meta, addr_space_id)
 
     # Default value (scalars passed as arguments usually?)
@@ -67,10 +79,13 @@ def _get_air_metadata_content(arg_type: str, arg_name: str) -> Tuple[str, int]:
     return (f'!"air.arg_type_name", !"{clean_type}"', 0)
 
 
-def _parse_signature(lines: List[str], start_idx: int) -> Tuple[str, List[Tuple[str, str]], Dict[str, int], str, int]:
+def _parse_signature(lines: List[str], start_idx: int) -> Tuple[str, List[Tuple[str, str, bool]], Dict[str, int], Dict[str, str], str, int]:
     """
     Parses the function signature spanning from start_idx.
-    Returns: (func_name, args_list, var_addrspaces, air_signature_line, next_idx)
+    Returns: (func_name, args_list, var_addrspaces, scalar_loads, air_signature_line, next_idx)
+
+    args_list: List of (type, name, is_output) tuples
+    scalar_loads: Dict mapping original scalar param name to loaded variable name
     """
     pkg = lines[start_idx]
     i = start_idx
@@ -92,6 +107,7 @@ def _parse_signature(lines: List[str], start_idx: int) -> Tuple[str, List[Tuple[
     new_sig_parts = []
     args_list = []
     var_addrspaces = {}
+    scalar_loads = {}  # Maps original param name -> loaded var name
 
     for arg_chunk in arg_chunks:
         if not arg_chunk:
@@ -103,6 +119,7 @@ def _parse_signature(lines: List[str], start_idx: int) -> Tuple[str, List[Tuple[
 
         clean_name = a_name.strip()
         res_type = a_type
+        is_output = False
 
         # Check if pointer
         if "*" in a_type:
@@ -113,19 +130,45 @@ def _parse_signature(lines: List[str], start_idx: int) -> Tuple[str, List[Tuple[
 
             var_addrspaces[clean_name] = as_id
 
+            # Determine if output buffer (heuristic: contains 'out' or 'C' or 'result')
+            if any(x in clean_name.lower() for x in ["out", "result"]) or clean_name in ["%C", "%c"]:
+                is_output = True
+
             if "addrspace" not in a_type:
                 res_type = a_type.replace("*", f" addrspace({as_id})*")
 
             new_sig_parts.append(f'{res_type} nocapture noundef "air-buffer-no-alias" {clean_name}')
         else:
-            var_addrspaces[clean_name] = 0
-            new_sig_parts.append(f"{a_type} noundef {clean_name}")
+            # Scalar argument - check if it's a thread position or a regular scalar
+            name_no_prefix = clean_name.replace("%", "").replace('"', "")
+
+            if name_no_prefix in ["id", "gid", "global_id", "tid", "lid", "local_id"]:
+                # Thread position arguments stay as scalars
+                var_addrspaces[clean_name] = 0
+                new_sig_parts.append(f"{a_type} {clean_name}")
+            else:
+                # Regular scalar - convert to constant buffer pointer
+                base_type = a_type.strip()
+                ptr_type = f"{base_type} addrspace(2)*"
+
+                # Get size for dereferenceable attribute
+                _, size, align = _get_type_info(base_type)
+
+                var_addrspaces[clean_name] = 2
+                new_sig_parts.append(f'{ptr_type} nocapture noundef readonly align {align} dereferenceable({size}) "air-buffer-no-alias" {clean_name}')
+
+                # Track that this needs to be loaded
+                loaded_var = f"%{name_no_prefix}.loaded"
+                scalar_loads[clean_name] = loaded_var
+
+                # Update res_type to the pointer type for metadata
+                res_type = ptr_type
 
         name_no_prefix = clean_name.replace("%", "").replace('"', "")
-        args_list.append((res_type, name_no_prefix))
+        args_list.append((res_type, name_no_prefix, is_output))
 
-    air_sig = f'define void @{func_name}({", ".join(new_sig_parts)}) local_unnamed_addr #0 {{'
-    return func_name, args_list, var_addrspaces, air_sig, i + 1
+    air_sig = f'define void @{func_name}({", ".join(new_sig_parts)}) #0 {{'
+    return func_name, args_list, var_addrspaces, scalar_loads, air_sig, i + 1
 
 
 VALID_OPCODES: Set[str] = {
@@ -229,13 +272,13 @@ def _replace_intrinsics(line: str) -> Tuple[str, Set[str]]:
     return line, used_intr
 
 
-def _generate_metadata(func_name: str, args_list: List[Tuple[str, str]]) -> List[str]:
+def _generate_metadata(func_name: str, args_list: List[Tuple[str, str, bool]]) -> List[str]:
     """
     Generates Metal AIR metadata for a kernel function.
 
     Args:
         func_name: Name of the kernel function
-        args_list: List of (type, name) tuples for function arguments
+        args_list: List of (type, name, is_output) tuples for function arguments
 
     Returns:
         List of metadata lines to append to output
@@ -250,17 +293,19 @@ def _generate_metadata(func_name: str, args_list: List[Tuple[str, str]]) -> List
         return f"!{meta_id-1}"
 
     arg_meta_refs = []
-    global_buffer_idx = 0
-    threadgroup_buffer_idx = 0
+    global_buffer_idx = 0  # For addrspace(1) and addrspace(2) - they share location indices
+    threadgroup_buffer_idx = 0  # For addrspace(3) - separate location indices
 
-    for idx, (at, an) in enumerate(args_list):
-        template, as_id = _get_air_metadata_content(at, an)
+    for idx, (at, an, is_out) in enumerate(args_list):
+        template, as_id = _get_air_metadata_content(at, an, is_out)
         content = template
         if "{loc_index}" in template:
+            # Address space 1 (global) and 2 (constant) share the same location index counter
+            # Address space 3 (threadgroup) has its own counter
             if as_id == 3:
                 buf_idx = threadgroup_buffer_idx
                 threadgroup_buffer_idx += 1
-            else:
+            else:  # as_id == 1 or as_id == 2
                 buf_idx = global_buffer_idx
                 global_buffer_idx += 1
             content = content.replace("{loc_index}", str(buf_idx))
@@ -271,7 +316,17 @@ def _generate_metadata(func_name: str, args_list: List[Tuple[str, str]]) -> List
         arg_meta_refs.append(m(f"!{{i32 {idx}, {content}}}"))
 
     empty = m("!{}")
-    meta_sig_parts = [x[0] for x in args_list]
+    # Build the metadata signature using the TRANSFORMED types from args_list
+    # For constant buffer scalars, we need to use the pointer type
+    meta_sig_parts = []
+    for arg_type, arg_name, _ in args_list:
+        # If this was a scalar that got converted to a constant buffer pointer,
+        # use the pointer type in the metadata signature
+        if "addrspace(2)*" in arg_type:
+            meta_sig_parts.append(arg_type)
+        else:
+            meta_sig_parts.append(arg_type)
+
     sig_str = f"void ({', '.join(meta_sig_parts)})*"
     lines.append(f"!{meta_id} = !{{{sig_str} @{func_name}, {empty}, !{{{', '.join(arg_meta_refs)}}}}}")
     kernel_node = f"!{meta_id}"
@@ -374,8 +429,9 @@ def to_air(llvm_ir_text: str) -> str:
     i = 0
     in_function = False
     func_name = ""
-    args_list: List[Tuple[str, str]] = []
+    args_list: List[Tuple[str, str, bool]] = []
     var_addrspaces: Dict[str, int] = {}
+    scalar_loads: Dict[str, str] = {}
 
     all_used_intrinsics = set()
 
@@ -384,10 +440,37 @@ def to_air(llvm_ir_text: str) -> str:
         stripped = line.strip()
 
         if stripped.startswith("define void"):
-            func_name, args_list, var_addrspaces, air_sig, next_i = _parse_signature(lines, i)
+            func_name, args_list, var_addrspaces, scalar_loads, air_sig, next_i = _parse_signature(lines, i)
             output_lines.append(air_sig)
             i = next_i
             in_function = True
+
+            # Insert load instructions for scalar parameters right after entry label
+            if scalar_loads:
+                # Find the entry label
+                while i < len(lines) and not lines[i].strip().endswith(":"):
+                    output_lines.append(lines[i])
+                    i += 1
+
+                # Output the entry label
+                if i < len(lines):
+                    output_lines.append(lines[i])
+                    i += 1
+
+                # Insert load instructions
+                for param_name, loaded_var in scalar_loads.items():
+                    # Get the base type from var_addrspaces
+                    # We need to extract the type from the parameter
+                    base_type = None
+                    for arg_type, arg_name, _ in args_list:
+                        if f"%{arg_name}" == param_name or arg_name == param_name.replace("%", ""):
+                            # Extract base type from "i32 addrspace(2)*"
+                            base_type = arg_type.split("addrspace")[0].strip()
+                            break
+
+                    if base_type:
+                        output_lines.append(f"  {loaded_var} = load {base_type}, {base_type} addrspace(2)* {param_name}, align 4")
+
             continue
 
         if not in_function:
@@ -415,6 +498,13 @@ def to_air(llvm_ir_text: str) -> str:
         # Body Instructions
         _validate_opcode(line)
         new_line, newly_used = _convert_instruction(line, var_addrspaces)
+
+        # Replace scalar parameter references with loaded values
+        for param_name, loaded_var in scalar_loads.items():
+            # Use word boundaries to avoid partial replacements
+            param_pattern = re.escape(param_name) + r"\b"
+            new_line = re.sub(param_pattern, loaded_var, new_line)
+
         all_used_intrinsics.update(newly_used)
         output_lines.append(new_line)
         i += 1
@@ -441,7 +531,7 @@ def to_air(llvm_ir_text: str) -> str:
         name_only = intr.replace("@", "")
         # Add pure attribute #2 (same as barrier for now or #0? Let's use #2 convergent nounwind willreturn which seems safe enough for math)
         output_lines.append(f"declare {ret_type} @{name_only}{arg_types} #2")
-    output_lines.append('attributes #0 = { argmemonly mustprogress nofree norecurse nosync nounwind willreturn "approx-func-fp-math"="true" "frame-pointer"="all" "min-legal-vector-width"="0" "no-builtins" "no-infs-fp-math"="true" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "unsafe-fp-math"="true" }')
+    output_lines.append('attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn "approx-func-fp-math"="true" "frame-pointer"="all" "min-legal-vector-width"="0" "no-builtins" "no-infs-fp-math"="true" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "unsafe-fp-math"="true" }')
     output_lines.append("attributes #1 = { convergent mustprogress nounwind willreturn }")
     output_lines.append("attributes #2 = { convergent nounwind willreturn }")
 

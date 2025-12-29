@@ -20,7 +20,8 @@ You must strictly adhere to the Red -> Green -> Refactor cycle for every task.
 * Verify Failure: Run `make test` to confirm the failure. Do not proceed until you have a confirmed failing test.
 
 ### Phase 2: The "Green" State (Make it Work)
-* Implement: Modify src/llvm_to_air.py to handle the new case.
+* Implement: Modify `src/llvm_to_air.py` to handle the new case.
+* Write a `.metal` shadeer and compile it to `.air` using `metal -emit-air` to investigate what the output should look like.
 * Constraint: Write the minimum amount of code necessary to pass the test.
 * Verify Pass: Run `make test` to ensure the new test passes and no regressions were introduced.
 
@@ -32,29 +33,6 @@ You must strictly adhere to the Red -> Green -> Refactor cycle for every task.
     * Ensure variable names are semantic.
     * Crucial: Do not change behavior, only structure.
 * Final Verify: Run `make test` one last time.
-
----
-
-## Code Quality Standards
-
-To avoid "messy code," you must enforce the following:
-
-1. Regex Hygiene: Avoid loose .* matches. Use specific capture groups. Comment complex regex patterns.
-2. Fail Fast: If an LLVM instruction is unrecognized, raise a clear NotImplementedError or descriptive exception rather than generating broken AIR code.
-3. Modularity: Do not write monolithic parsing loops. Break handlers for specific instructions (e.g., add, store, icmp) into distinct logical blocks or functions.
-4. Idempotency: Ensure the script produces deterministic output for the same input.
-
-- Obvious Code > Clever Code
-- Maximize Locality: Keep related code together. Define things near usage. Minimize variable scope.
-- Centralize Control Flow: Branching logic belongs in parents. leaf functions should be pure logic.
-- Guard Clauses: Handle checks first, return early, minimize nesting.
-- Functions: Do one coherent thing (ideally <70 lines). Prefer lambdas/inline logic over tiny single-use functions.
-- Decompose Conditionals: Use named variables to simplify complex `if` conditions.
-- Naming & Comments:
-    - Comments explain *why*, not *what*; use lowercase single lines. ASCII illustrations are welcome.
-- Paradigm Balance:
-    - Functional: Prefer pure functions (data in, data out) and immutability for logic.
-    - Procedural: Use direct loops and local mutation when simpler or significantly more performant.
 
 ---
 
@@ -99,3 +77,26 @@ def test_add(binary_add):
     result = run_kernel_1d_float(binary_add, input_data, "add_kernel")
     assert result == pytest.approx(expected)
 ```
+
+---
+
+## Code Quality Standards
+
+To avoid "messy code," you must enforce the following:
+
+1. Regex Hygiene: Avoid loose .* matches. Use specific capture groups. Comment complex regex patterns.
+2. Fail Fast: If an LLVM instruction is unrecognized, raise a clear NotImplementedError or descriptive exception rather than generating broken AIR code.
+3. Modularity: Do not write monolithic parsing loops. Break handlers for specific instructions (e.g., add, store, icmp) into distinct logical blocks or functions.
+4. Idempotency: Ensure the script produces deterministic output for the same input.
+
+- Obvious Code > Clever Code
+- Maximize Locality: Keep related code together. Define things near usage. Minimize variable scope.
+- Centralize Control Flow: Branching logic belongs in parents. leaf functions should be pure logic.
+- Guard Clauses: Handle checks first, return early, minimize nesting.
+- Functions: Do one coherent thing (ideally <70 lines). Prefer lambdas/inline logic over tiny single-use functions.
+- Decompose Conditionals: Use named variables to simplify complex `if` conditions.
+- Naming & Comments:
+    - Comments explain *why*, not *what*; use lowercase single lines. ASCII illustrations are welcome.
+- Paradigm Balance:
+    - Functional: Prefer pure functions (data in, data out) and immutability for logic.
+    - Procedural: Use direct loops and local mutation when simpler or significantly more performant.
