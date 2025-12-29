@@ -23,6 +23,144 @@ LLVM_TO_AIR_TYPES = {
 }
 
 
+class MetadataGenerator:
+    @staticmethod
+    def emit(kernels: List[Tuple[str, List[Tuple[str, str, bool]]]], used_intrinsics: Set[str]) -> List[str]:
+        lines = ["\ndeclare void @air.wg.barrier(i32, i32) local_unnamed_addr #1"]
+
+        # intrinsics declarations
+        for intr in sorted(used_intrinsics):
+            lines.extend(MetadataGenerator._emit_intrinsic_decl(intr))
+
+        # attributes
+        lines.append('attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn "approx-func-fp-math"="true" "frame-pointer"="all" "min-legal-vector-width"="0" "no-builtins" "no-infs-fp-math"="true" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "unsafe-fp-math"="true" }')
+        lines.append("attributes #1 = { convergent mustprogress nounwind willreturn }")
+        lines.append("attributes #2 = { convergent nounwind willreturn }")
+
+        if kernels:
+            lines.extend(MetadataGenerator._generate_kernel_metadata(kernels))
+
+        return lines
+
+    @staticmethod
+    def _emit_intrinsic_decl(intr: str) -> List[str]:
+        lines = []
+        # convert handling
+        if "air.convert" in intr:
+            parts = intr.replace("@air.convert.", "").split(".")
+
+            # f.f32.u.i32 -> f, f32, u, i32
+            # map air types back to llvm types for declaration
+            def map_type(t):
+                return AIR_TO_LLVM_TYPES.get(t, t)
+
+            # index 1 is dest type, Index 3 is src type
+            ret_type = map_type(parts[1])
+            arg_type = map_type(parts[3])
+
+            lines.append(f"declare {ret_type} {intr}({arg_type}) #2")
+            return lines
+
+        # math handling
+        arg_types = "(float)"
+        if any(x in intr for x in ["pow", "fmin", "fmax"]):
+            arg_types = "(float, float)"
+        elif "fma" in intr:
+            arg_types = "(float, float, float)"
+
+        name = intr.replace("@", "")
+        lines.append(f"declare float @{name}{arg_types} #2")
+        return lines
+
+    @staticmethod
+    def _generate_kernel_metadata(kernels: List[Tuple[str, List[Tuple[str, str, bool]]]]) -> List[str]:
+        lines = []
+        meta_id = 0
+
+        def m(c):
+            nonlocal meta_id
+            lines.append(f"!{meta_id} = {c}")
+            meta_id += 1
+            return f"!{meta_id-1}"
+
+        kernel_nodes = []
+
+        for func_name, args_list in kernels:
+            arg_meta_refs = []
+            loc_indices = {1: 0, 2: 0, 3: 0}  # map addrspace -> current index (1 & 2 share)
+
+            for idx, (at, an, is_out) in enumerate(args_list):
+                template, as_id = MetadataGenerator._get_air_metadata_content(at, an, is_out)
+                content = template
+
+                if "{loc_index}" in template:
+                    # logic: Global(1) and Constant(2) share index. Threadgroup(3) separate.
+                    link_id = 1 if as_id in [1, 2] else 3
+                    content = content.replace("{loc_index}", str(loc_indices[link_id]))
+                    loc_indices[link_id] += 1
+
+                if "air.arg_name" not in content:
+                    content += f', !"air.arg_name", !"{an}"'
+
+                arg_meta_refs.append(m(f"!{{i32 {idx}, {content}}}"))
+
+            empty = m("!{}")
+
+            # signature types for metadata
+            meta_sig_parts = [arg_type if "addrspace(2)*" not in arg_type else arg_type for arg_type, _, _ in args_list]
+            sig_str = f"void ({', '.join(meta_sig_parts)})*"
+
+            kernel_nodes.append(m(f"!{{{sig_str} @{func_name}, {empty}, !{{{', '.join(arg_meta_refs)}}}}}"))
+
+        # standard descriptors
+        descriptors = [
+            '!"air.compile.denorms_disable"',
+            '!"air.compile.fast_math_enable"',
+            '!"air.compile.framebuffer_fetch_enable"',
+            '!"Apple metal version 32023.830 (metalfe-32023.830.2)"',
+        ]
+
+        desc_refs = []
+        for d in descriptors:
+            desc_refs.append(m(f"!{{{d}}}"))
+
+        version = m(f"!{{i32 2, i32 7, i32 0}}")
+        metal_ver = m(f'!{{!"Metal", i32 3, i32 2, i32 0}}')
+        src_file = m(f'!{{!"input.ll"}}')
+
+        # top level
+        top_meta = [f"!air.kernel = !{{{', '.join(kernel_nodes)}}}", f"!air.compile_options = !{{{', '.join(desc_refs[:3])}}}", f"!llvm.ident = !{{{desc_refs[3]}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{metal_ver}}}", f"!air.source_file_name = !{{{src_file}}}", ""]
+
+        return top_meta + lines
+
+    @staticmethod
+    def _get_air_metadata_content(arg_type: str, arg_name: str, is_output: bool) -> Tuple[str, int]:
+        # id / grid position
+        if arg_name in ["id", "gid", "global_id"]:
+            return ('!"air.thread_position_in_grid", !"air.arg_type_name", !"uint"', 0)
+        if arg_name in ["tid", "lid", "local_id"]:
+            return ('!"air.thread_position_in_threadgroup", !"air.arg_type_name", !"uint"', 0)
+
+        # buffers
+        if "addrspace" in arg_type or "*" in arg_type:
+            base_t_str = re.sub(r"addrspace\(\d+\)", "", arg_type.replace("*", "")).strip()
+            base_name, size, align = get_type_info(base_t_str)
+
+            as_id = 3 if "addrspace(3)" in arg_type else (2 if "addrspace(2)" in arg_type else 1)
+
+            access_mode = '!"air.read"' if (as_id == 2 or not is_output) else '!"air.read_write"'
+
+            meta_parts = [f'!"air.buffer"', f'!"air.location_index", i32 {{loc_index}}, i32 1', access_mode, f'!"air.address_space", i32 {as_id}', f'!"air.arg_type_size", i32 {size}', f'!"air.arg_type_align_size", i32 {align}', f'!"air.arg_type_name", !"{base_name}"']
+
+            if as_id == 2:
+                meta_parts.insert(1, f'!"air.buffer_size", i32 {size}')
+
+            return (", ".join(meta_parts), as_id)
+
+        # default scalar
+        return (f'!"air.arg_type_name", !"{arg_type.strip()}"', 0)
+
+
 class AirTranslator:
     def __init__(self, llvm_ir: str):
         self.lines = llvm_ir.splitlines()
@@ -52,7 +190,7 @@ class AirTranslator:
 
             i += 1
 
-        self._emit_metadata()
+        self.output_lines.extend(MetadataGenerator.emit(self.kernels, self.used_intrinsics))
         return "\n".join(self.output_lines)
 
     #
@@ -328,134 +466,6 @@ class AirTranslator:
     #
     # emit metadata
     #
-
-    def _emit_metadata(self):
-        self.output_lines.append("\ndeclare void @air.wg.barrier(i32, i32) local_unnamed_addr #1")
-
-        # intrinsics Declarations
-        for intr in sorted(self.used_intrinsics):
-            self._emit_intrinsic_decl(intr)
-
-        # attributes
-        self.output_lines.append('attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn "approx-func-fp-math"="true" "frame-pointer"="all" "min-legal-vector-width"="0" "no-builtins" "no-infs-fp-math"="true" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "unsafe-fp-math"="true" }')
-        self.output_lines.append("attributes #1 = { convergent mustprogress nounwind willreturn }")
-        self.output_lines.append("attributes #2 = { convergent nounwind willreturn }")
-
-        if self.kernels:
-            self.output_lines.extend(self._generate_kernel_metadata())
-
-    def _emit_intrinsic_decl(self, intr: str):
-        # convert handling
-        if "air.convert" in intr:
-            parts = intr.replace("@air.convert.", "").split(".")
-
-            # f.f32.u.i32 -> f, f32, u, i32
-            # map air types back to llvm types for declaration
-            def map_type(t):
-                return AIR_TO_LLVM_TYPES.get(t, t)
-
-            # index 1 is dest type, Index 3 is src type
-            ret_type = map_type(parts[1])
-            arg_type = map_type(parts[3])
-
-            self.output_lines.append(f"declare {ret_type} {intr}({arg_type}) #2")
-            return
-
-        # math handling
-        arg_types = "(float)"
-        if any(x in intr for x in ["pow", "fmin", "fmax"]):
-            arg_types = "(float, float)"
-        elif "fma" in intr:
-            arg_types = "(float, float, float)"
-
-        name = intr.replace("@", "")
-        self.output_lines.append(f"declare float @{name}{arg_types} #2")
-
-    def _generate_kernel_metadata(self) -> List[str]:
-        lines = []
-        meta_id = 0
-
-        def m(c):
-            nonlocal meta_id
-            lines.append(f"!{meta_id} = {c}")
-            meta_id += 1
-            return f"!{meta_id-1}"
-
-        kernel_nodes = []
-
-        for func_name, args_list in self.kernels:
-            arg_meta_refs = []
-            loc_indices = {1: 0, 2: 0, 3: 0}  # map addrspace -> current index (1 & 2 share)
-
-            for idx, (at, an, is_out) in enumerate(args_list):
-                template, as_id = self._get_air_metadata_content(at, an, is_out)
-                content = template
-
-                if "{loc_index}" in template:
-                    # logic: Global(1) and Constant(2) share index. Threadgroup(3) separate.
-                    link_id = 1 if as_id in [1, 2] else 3
-                    content = content.replace("{loc_index}", str(loc_indices[link_id]))
-                    loc_indices[link_id] += 1
-
-                if "air.arg_name" not in content:
-                    content += f', !"air.arg_name", !"{an}"'
-
-                arg_meta_refs.append(m(f"!{{i32 {idx}, {content}}}"))
-
-            empty = m("!{}")
-
-            # signature types for metadata
-            meta_sig_parts = [arg_type if "addrspace(2)*" not in arg_type else arg_type for arg_type, _, _ in args_list]
-            sig_str = f"void ({', '.join(meta_sig_parts)})*"
-
-            kernel_nodes.append(m(f"!{{{sig_str} @{func_name}, {empty}, !{{{', '.join(arg_meta_refs)}}}}}"))
-
-        # standard descriptors
-        descriptors = [
-            '!"air.compile.denorms_disable"',
-            '!"air.compile.fast_math_enable"',
-            '!"air.compile.framebuffer_fetch_enable"',
-            '!"Apple metal version 32023.830 (metalfe-32023.830.2)"',
-        ]
-
-        desc_refs = []
-        for d in descriptors:
-            desc_refs.append(m(f"!{{{d}}}"))
-
-        version = m(f"!{{i32 2, i32 7, i32 0}}")
-        metal_ver = m(f'!{{!"Metal", i32 3, i32 2, i32 0}}')
-        src_file = m(f'!{{!"input.ll"}}')
-
-        # top level
-        top_meta = [f"!air.kernel = !{{{', '.join(kernel_nodes)}}}", f"!air.compile_options = !{{{', '.join(desc_refs[:3])}}}", f"!llvm.ident = !{{{desc_refs[3]}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{metal_ver}}}", f"!air.source_file_name = !{{{src_file}}}", ""]
-
-        return top_meta + lines
-
-    def _get_air_metadata_content(self, arg_type: str, arg_name: str, is_output: bool) -> Tuple[str, int]:
-        # id / grid position
-        if arg_name in ["id", "gid", "global_id"]:
-            return ('!"air.thread_position_in_grid", !"air.arg_type_name", !"uint"', 0)
-        if arg_name in ["tid", "lid", "local_id"]:
-            return ('!"air.thread_position_in_threadgroup", !"air.arg_type_name", !"uint"', 0)
-
-        # buffers
-        if "addrspace" in arg_type or "*" in arg_type:
-            base_t_str = re.sub(r"addrspace\(\d+\)", "", arg_type.replace("*", "")).strip()
-            base_name, size, align = get_type_info(base_t_str)
-
-            as_id = 3 if "addrspace(3)" in arg_type else (2 if "addrspace(2)" in arg_type else 1)
-
-            access_mode = '!"air.read"' if (as_id == 2 or not is_output) else '!"air.read_write"'
-
-            meta_parts = [f'!"air.buffer"', f'!"air.location_index", i32 {{loc_index}}, i32 1', access_mode, f'!"air.address_space", i32 {as_id}', f'!"air.arg_type_size", i32 {size}', f'!"air.arg_type_align_size", i32 {align}', f'!"air.arg_type_name", !"{base_name}"']
-
-            if as_id == 2:
-                meta_parts.insert(1, f'!"air.buffer_size", i32 {size}')
-
-            return (", ".join(meta_parts), as_id)
-
-        # default scalar
-        return (f'!"air.arg_type_name", !"{arg_type.strip()}"', 0)
 
 
 def to_air(llvm_ir_text: str) -> str:
