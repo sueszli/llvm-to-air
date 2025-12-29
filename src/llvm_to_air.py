@@ -46,6 +46,8 @@ def _get_metal_metadata() -> str:
 
 def to_air(llvm_ir_text: str) -> str:
     """Transforms generic LLVM IR strings to Metal AIR format."""
+    import re
+
     output_lines = []
 
     # 1. Header (strict target requirements for Metal)
@@ -54,13 +56,47 @@ def to_air(llvm_ir_text: str) -> str:
 
     in_function_body = False
 
+    # Track variables pointing to shared memory (Address Space 3)
+    shared_ptrs = set()
+
     for line in llvm_ir_text.splitlines():
         # Function Entry
         if "define" in line and "test_kernel" in line:
             in_function_body = True
-            # AS 1 = Global/Device, AS 3 = Threadgroup/Shared
-            # Names must match those generated in generate_llvm(): in_ptr, out_ptr, global_id, local_id, shared_ptr
-            sig = 'define void @test_kernel(float addrspace(1)* nocapture noundef readonly "air-buffer-no-alias" %in_ptr, float addrspace(1)* nocapture noundef writeonly "air-buffer-no-alias" %out_ptr, i32 noundef %global_id, i32 noundef %local_id, float addrspace(3)* nocapture noundef "air-buffer-no-alias" %shared_ptr) local_unnamed_addr #0'
+
+            # Parse arguments
+            # Input format: define void @test_kernel(float* %in_ptr, float* %out_ptr, i32 %global_id, i32 %local_id, float* %shared_ptr)
+            # We expect strict ordering for now: in, out, id, tid, shared (as per metadata)
+            # Regex handles optional quotes: define void @"?test_kernel"?(...)
+            match = re.search(r"define void @\"?test_kernel\"?\((.*)\)", line)
+            if not match:
+                raise ValueError("Could not parse test_kernel signature")
+
+            args_raw = match.group(1).split(",")
+            arg_names = []
+            for arg in args_raw:
+                parts = arg.strip().split()
+                name = parts[-1]  # "%name" or %"name"
+                arg_names.append(name)
+
+            if len(arg_names) != 5:
+                raise ValueError(f"Expected 5 arguments, found {len(arg_names)}")
+
+            # Initialize shared pointers with the 5th argument (index 4)
+            # We store the FULL identifier (including %)
+            shared_ptrs.add(arg_names[4])
+
+            # Reconstruct Signature with Metal Attributes
+            # 0: input (device, readonly)
+            # 1: output (device, writeonly)
+            # 2: global_id (i32)
+            # 3: local_id (i32)
+            # 4: shared (threadgroup)
+
+            new_args = [f'float addrspace(1)* nocapture noundef readonly "air-buffer-no-alias" {arg_names[0]}', f'float addrspace(1)* nocapture noundef writeonly "air-buffer-no-alias" {arg_names[1]}', f"i32 noundef {arg_names[2]}", f"i32 noundef {arg_names[3]}", f'float addrspace(3)* nocapture noundef "air-buffer-no-alias" {arg_names[4]}']
+
+            # Ensure function name is standard @test_kernel for AIR
+            sig = f'define void @test_kernel({", ".join(new_args)}) local_unnamed_addr #0'
             output_lines.append(sig)
             continue
 
@@ -79,14 +115,37 @@ def to_air(llvm_ir_text: str) -> str:
         # Replace generic barrier with Metal intrinsic
         if "call" in line and "barrier" in line:
             processed_line = "  tail call void @air.wg.barrier(i32 2, i32 1) #2"
+            output_lines.append(processed_line)
+            continue
 
-        # Propagate address spaces
-        # Heuristic: If variable name implies shared memory, use AS 3, otherwise AS 1.
-        if "getelementptr" in line or "load" in line or "store" in line:
-            # We look for 'float*' and decide if it should be 'float addrspace(3)*'
-            # Note: Checking for 'shared' string cover both %shared_data arg and %ptr_shared var
-            target_as = "addrspace(3)" if "shared" in line else "addrspace(1)"
-            processed_line = processed_line.replace("float*", f"float {target_as}*")
+        # Address Space Propagation
+        # Identify variables used in this line
+        # Regex to find %var, handling quotes: %"var name" or %var
+        vars_in_line = re.findall(r'(%".*?"|%[\w\.]+)', line)
+
+        # Check if line involves shared memory
+        is_shared_op = False
+        for v in vars_in_line:
+            if v in shared_ptrs:
+                is_shared_op = True
+                break
+
+        if is_shared_op:
+            # If this instruction produces a result (LHS), that result is also a shared pointer
+            # Only propagate for pointer arithmetic/casting (GEP, bitcast)
+            # We do NOT want to propagate for 'load' (which produces a value, not a pointer)
+            if "getelementptr" in line or "bitcast" in line:
+                # Pattern: %res = ...
+                lhs_match = re.match(r'\s*(%".*?"|%[\w\.]+)\s*=', line)
+                if lhs_match:
+                    result_var = lhs_match.group(1)
+                    shared_ptrs.add(result_var)
+
+            # Replace float* with float addrspace(3)*
+            processed_line = processed_line.replace("float*", "float addrspace(3)*")
+        else:
+            # Default to global memory (addrspace 1)
+            processed_line = processed_line.replace("float*", "float addrspace(1)*")
 
         output_lines.append(processed_line)
 
