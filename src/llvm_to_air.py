@@ -527,7 +527,32 @@ class AirTranslator:
 
 
 def to_air(llvm_ir_text: str, kernel_overrides: Dict[str, Dict[str, str]] = None) -> str:
-    # kernel_overrides is used to rename kernel arguments and assign them specific semantic meanings
-    # example: kernel_overrides = {"my_kernel": {"0": "gid"}} ensures the first argument of "my_kernel" is identified as the grid position
+    """
+    translates LLVM IR to Apple IR (AIR).
+
+    :param llvm_ir_text: the string containing LLVM IR code.
+    :param kernel_overrides: a dictionary used to rename kernel arguments and assign them specific semantic meanings.
+                             this is useful when integrating with IR generators (like MLIR or TVM) that produce
+                             non-semantic argument names (e.g., %0, %1).
+
+    example use case:
+        automated tools might generate:
+            define void @vector_add(float* %0, float* %1, float* %2, i32 %3) { ... }
+
+        where:
+            %2 is the output buffer
+            %3 is the global thread ID
+
+        by providing:
+            kernel_overrides = {
+                "vector_add": {
+                    "2": "out",  # "out" ensures the buffer is marked read_write
+                    "3": "gid"   # "gid" generates "air.thread_position_in_grid" metadata
+                }
+            }
+
+        the translator will correctly generate AIR metadata identifying argument 3 as the grid position
+        and argument 2 as a writeable buffer.
+    """
     translator = AirTranslator(llvm_ir_text, kernel_overrides)
     return translator.translate()
