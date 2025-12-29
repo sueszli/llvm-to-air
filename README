@@ -6,4 +6,7 @@ based on:
 https://forum.modular.com/t/apple-silicon-gpu-support-in-mojo/2295
 
 
-missing features: `grep -r "TODO:" .`
+reverse engineering is hard
+caveats:
+- not reproducible, can't containerize gpu compilation processs
+- not portable, lots of metadata generated is architecture specific for the M2 Pro chip

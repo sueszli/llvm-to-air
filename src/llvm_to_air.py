@@ -160,7 +160,15 @@ class MetadataGenerator:
         src_file = m(f'!{{!"input.ll"}}')
 
         # top level
-        top_meta = [f"!air.kernel = !{{{', '.join(kernel_nodes)}}}", f"!air.compile_options = !{{{', '.join(desc_refs[:3])}}}", f"!llvm.ident = !{{{desc_refs[3]}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{metal_ver}}}", f"!air.source_file_name = !{{{src_file}}}", "",]
+        top_meta = [
+            f"!air.kernel = !{{{', '.join(kernel_nodes)}}}",
+            f"!air.compile_options = !{{{', '.join(desc_refs[:3])}}}",
+            f"!llvm.ident = !{{{desc_refs[3]}}}",
+            f"!air.version = !{{{version}}}",
+            f"!air.language_version = !{{{metal_ver}}}",
+            f"!air.source_file_name = !{{{src_file}}}",
+            "",
+        ]
 
         return top_meta + lines
 
