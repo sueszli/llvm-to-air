@@ -1,3 +1,5 @@
+import math
+
 import pytest
 from utils import compile_to_metallib, run_kernel_1d_float
 
@@ -93,3 +95,69 @@ def test_large_grid_execution(binary_add_index):
     for i in range(size):
         expected = 1.0 + float(i)
         assert output[i] == expected, f"Mismatch at index {i}: expected {expected}, got {output[i]}"
+
+
+#
+# out[i] = in[i] - 1.0
+#
+
+LLVM_IR_SUB = """
+define void @sub_kernel(float* %a, float* %b, i32 %id) {
+  %idx = zext i32 %id to i64
+  %ptr_in = getelementptr inbounds float, float* %a, i64 %idx
+  %val = load float, float* %ptr_in
+  %res = fsub float %val, 1.0
+  %ptr_out = getelementptr inbounds float, float* %b, i64 %idx
+  store float %res, float* %ptr_out
+  ret void
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def binary_sub():
+    return compile_to_metallib(LLVM_IR_SUB)
+
+
+def test_sub(binary_sub):
+    input_data = [2.0, 3.0]
+    expected = [1.0, 2.0]
+    result = run_kernel_1d_float(binary_sub, input_data, "sub_kernel")
+    assert result == pytest.approx(expected)
+
+
+#
+# out[i] = exp(in[i]) / 2.0
+#
+
+LLVM_IR_TENSOR_OPS = """
+declare float @llvm.exp.f32(float)
+
+define void @tensor_ops(float* %a, float* %b, i32 %id) {
+  %idx = zext i32 %id to i64
+  %ptr_in = getelementptr inbounds float, float* %a, i64 %idx
+  %val = load float, float* %ptr_in
+  
+  ; exp(val)
+  %val_exp = call float @llvm.exp.f32(float %val)
+  
+  ; / 2.0
+  %res = fdiv float %val_exp, 2.0
+  
+  %ptr_out = getelementptr inbounds float, float* %b, i64 %idx
+  store float %res, float* %ptr_out
+  ret void
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def binary_tensor_ops():
+    return compile_to_metallib(LLVM_IR_TENSOR_OPS)
+
+
+def test_div_exp(binary_tensor_ops):
+    input_data = [0.0, 1.0, -1.0]
+    expected = [math.exp(x) / 2.0 for x in input_data]
+    result = run_kernel_1d_float(binary_tensor_ops, input_data, "tensor_ops")
+    assert result == pytest.approx(expected)

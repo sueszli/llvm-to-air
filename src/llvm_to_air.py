@@ -1,5 +1,5 @@
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Set, Tuple
 
 
 def _get_type_info(type_str: str) -> Tuple[str, int, int]:
@@ -66,9 +66,189 @@ def _get_air_metadata_content(arg_type: str, arg_name: str) -> Tuple[str, int]:
     return (f'!"air.arg_type_name", !"{clean_type}"', 0)
 
 
+def _parse_signature(lines: List[str], start_idx: int) -> Tuple[str, List[Tuple[str, str]], Dict[str, int], str, int]:
+    """
+    Parses the function signature spanning from start_idx.
+    Returns: (func_name, args_list, var_addrspaces, air_signature_line, next_idx)
+    """
+    pkg = lines[start_idx]
+    i = start_idx
+    while "{" not in pkg:
+        i += 1
+        pkg += " " + lines[i]
+
+    # Parse signature - using robust regex
+    sig_match = re.search(r"define\s+void\s+@\"?([\w\.]+)\"?\s*\((.*?)\).*?{", pkg, re.DOTALL)
+    if not sig_match:
+        raise ValueError(f"Failed to parse function signature: {pkg}")
+
+    raw_name = sig_match.group(1)
+    func_name = raw_name.replace('"', "")
+
+    raw_args = sig_match.group(2)
+    arg_chunks = [x.strip() for x in raw_args.split(",")] if raw_args.strip() else []
+
+    new_sig_parts = []
+    args_list = []
+    var_addrspaces = {}
+
+    for arg_chunk in arg_chunks:
+        if not arg_chunk:
+            continue
+
+        parts = arg_chunk.split()
+        a_name = parts[-1]
+        a_type = " ".join(parts[:-1])  # Everything else is type
+
+        clean_name = a_name.strip()
+        res_type = a_type
+
+        # Check if pointer
+        if "*" in a_type:
+            if "shared" in clean_name:
+                as_id = 3
+            else:
+                as_id = 1
+
+            var_addrspaces[clean_name] = as_id
+
+            if "addrspace" not in a_type:
+                res_type = a_type.replace("*", f" addrspace({as_id})*")
+
+            new_sig_parts.append(f'{res_type} nocapture noundef "air-buffer-no-alias" {clean_name}')
+        else:
+            var_addrspaces[clean_name] = 0
+            new_sig_parts.append(f"{a_type} noundef {clean_name}")
+
+        name_no_prefix = clean_name.replace("%", "").replace('"', "")
+        args_list.append((res_type, name_no_prefix))
+
+    air_sig = f'define void @{func_name}({", ".join(new_sig_parts)}) local_unnamed_addr #0 {{'
+    return func_name, args_list, var_addrspaces, air_sig, i + 1
+
+
+VALID_OPCODES: Set[str] = {
+    # Arithmetic
+    "fadd",
+    "fsub",
+    "fmul",
+    "fdiv",
+    "frem",
+    "add",
+    "sub",
+    "mul",
+    "sdiv",
+    "udiv",
+    "srem",
+    "urem",
+    "xor",
+    "or",
+    "and",
+    "shl",
+    "lshr",
+    "ashr",
+    "sitofp",
+    "zext",
+    "sext",
+    "uitofp",
+    "fptosi",
+    "fptoui",
+    "fcmp",
+    "icmp",
+    "select",
+    # Memory
+    "load",
+    "store",
+    "getelementptr",
+    "bitcast",
+    "alloca",
+    # Control Flow
+    "br",
+    "ret",
+    "phi",
+    "call",
+    "switch",
+    "unreachable",
+    # Vector
+    "insertelement",
+    "extractelement",
+    "shufflevector",
+}
+
+
+def _validate_opcode(line: str) -> None:
+    """Checks if the instruction opcode is whitelist-supported."""
+    stripped_line = line.strip()
+
+    # Comments/Labels handled by caller essentially, but good to be safe
+    if stripped_line.startswith(";") or stripped_line.endswith(":"):
+        return
+
+    rhs = stripped_line
+    if "=" in stripped_line:
+        parts = stripped_line.split("=", 1)
+        rhs = parts[1].strip()
+
+    tokens = rhs.split()
+    if not tokens:
+        return
+
+    opcode = tokens[0]
+
+    if opcode not in VALID_OPCODES:
+        raise NotImplementedError(f"Unknown instruction: {opcode} in line: {line.strip()}")
+
+
+def _convert_instruction(line: str, var_addrspaces: Dict[str, int]) -> Tuple[str, Set[str]]:
+    """Converts a single LLVM IR instruction line to Metal AIR IR."""
+    used_intr = set()
+
+    # Handle barrier
+    if "call" in line and "barrier" in line:
+        return ("  tail call void @air.wg.barrier(i32 2, i32 1) #2", used_intr)
+
+    # Handle intrinsics
+    if "call" in line:
+        # replace llvm intrinsic calls with air equivalent
+        # llvm.exp.f32 -> air.exp.f32
+        math_ops = ["exp", "log", "sin", "cos", "sqrt", "ceil", "floor", "fabs", "pow", "tanh"]
+        for op in math_ops:
+            llvm_intr = f"@llvm.{op}.f32"
+            air_intr = f"@air.{op}.f32"
+            if llvm_intr in line:
+                line = line.replace(llvm_intr, air_intr)
+                used_intr.add(air_intr)
+
+    def robust_replacer(m):
+        type_part = m.group(1)
+        var_part = m.group(2)
+        as_id = 0
+        if var_part in var_addrspaces:
+            as_id = var_addrspaces[var_part]
+        if as_id > 0:
+            return f"{type_part} addrspace({as_id})* {var_part}"
+        return m.group(0)
+
+    # Replace pointers with addrspace pointers based on tracking
+    new_line = re.sub(r"([\w\s<>\.]+)\*\s+(%[\w\.\"]+)", robust_replacer, line)
+
+    # Propagate address space to result of getelementptr/bitcast
+    if "=" in new_line:
+        lhs_match = re.search(r"(%[\w\.\"]+)\s*=", new_line)
+        if lhs_match:
+            lhs_var = lhs_match.group(1)
+            # Check if we just created an addrspace pointer
+            if "getelementptr" in new_line or "bitcast" in new_line:
+                as_match = re.search(r"addrspace\((\d+)\)\*", new_line)
+                if as_match:
+                    as_id = int(as_match.group(1))
+                    var_addrspaces[lhs_var] = as_id
+
+    return (new_line, used_intr)
+
+
 def to_air(llvm_ir_text: str) -> str:
     output_lines = []
-
     output_lines.append('target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"')
     output_lines.append('target triple = "air64_v27-apple-macosx15.0.0"\n')
 
@@ -76,74 +256,20 @@ def to_air(llvm_ir_text: str) -> str:
     i = 0
     in_function = False
     func_name = ""
-    args_list: List[Tuple[str, str]] = []  # (type, name)
+    args_list: List[Tuple[str, str]] = []
     var_addrspaces: Dict[str, int] = {}
+
+    all_used_intrinsics = set()
 
     while i < len(lines):
         line = lines[i]
         stripped = line.strip()
 
         if stripped.startswith("define void"):
-            full_sig = line
-            while "{" not in full_sig:
-                i += 1
-                full_sig += " " + lines[i]
-
-            # Parse signature - using robust regex
-            # Matches: define void @NAME(...)
-            sig_match = re.search(r"define\s+void\s+@\"?([\w\.]+)\"?\s*\((.*?)\).*?{", full_sig, re.DOTALL)
-            if not sig_match:
-                raise ValueError(f"Failed to parse function signature: {full_sig}")
-
-            raw_name = sig_match.group(1)
-            func_name = raw_name.replace('"', "")
-
-            raw_args = sig_match.group(2)
-            # Split args by comma, but be careful (simple split for now assumes no commas in types)
-            arg_chunks = [x.strip() for x in raw_args.split(",")] if raw_args.strip() else []
-
-            new_sig_parts = []
-
-            for arg_chunk in arg_chunks:
-                if not arg_chunk:
-                    continue
-
-                # Split type and name. Name is the last token starting with %
-                # Example: float* %a
-                # Example: <4 x float>* %b
-
-                parts = arg_chunk.split()
-                a_name = parts[-1]
-                a_type = " ".join(parts[:-1])  # Everything else is type
-
-                clean_name = a_name.strip()
-                res_type = a_type
-
-                # Check if pointer
-                if "*" in a_type:
-                    if "shared" in clean_name:
-                        as_id = 3
-                    else:
-                        as_id = 1
-
-                    var_addrspaces[clean_name] = as_id
-
-                    if "addrspace" not in a_type:
-                        # Insert addrspace before *
-                        # We need to handle <4 x float>* -> <4 x float> addrspace(1)*
-                        res_type = a_type.replace("*", f" addrspace({as_id})*")
-
-                    new_sig_parts.append(f'{res_type} nocapture noundef "air-buffer-no-alias" {clean_name}')
-                else:
-                    var_addrspaces[clean_name] = 0
-                    new_sig_parts.append(f"{a_type} noundef {clean_name}")
-
-                name_no_prefix = clean_name.replace("%", "").replace('"', "")
-                args_list.append((res_type, name_no_prefix))
-
-            output_lines.append(f'define void @{func_name}({", ".join(new_sig_parts)}) local_unnamed_addr #0 {{')
+            func_name, args_list, var_addrspaces, air_sig, next_i = _parse_signature(lines, i)
+            output_lines.append(air_sig)
+            i = next_i
             in_function = True
-            i += 1
             continue
 
         if not in_function:
@@ -156,39 +282,41 @@ def to_air(llvm_ir_text: str) -> str:
             i += 1
             continue
 
-        # Body
-        if "call" in line and "barrier" in line:
-            output_lines.append("  tail call void @air.wg.barrier(i32 2, i32 1) #2")
+        # Comments
+        if stripped.startswith(";"):
+            output_lines.append(line)
             i += 1
             continue
 
-        def robust_replacer(m):
-            type_part = m.group(1)
-            var_part = m.group(2)
-            as_id = 0
-            if var_part in var_addrspaces:
-                as_id = var_addrspaces[var_part]
-            if as_id > 0:
-                return f"{type_part} addrspace({as_id})* {var_part}"
-            return m.group(0)
+        # Labels
+        if stripped.endswith(":"):
+            output_lines.append(line)
+            i += 1
+            continue
 
-        new_line = re.sub(r"([\w\s<>\.]+)\*\s+(%[\w\.\"]+)", robust_replacer, line)
-
-        if "=" in new_line:
-            lhs_match = re.search(r"(%[\w\.\"]+)\s*=", new_line)
-            if lhs_match:
-                lhs_var = lhs_match.group(1)
-                if "getelementptr" in new_line or "bitcast" in new_line:
-                    as_match = re.search(r"addrspace\((\d+)\)\*", new_line)
-                    if as_match:
-                        as_id = int(as_match.group(1))
-                        var_addrspaces[lhs_var] = as_id
-
+        # Body Instructions
+        _validate_opcode(line)
+        new_line, newly_used = _convert_instruction(line, var_addrspaces)
+        all_used_intrinsics.update(newly_used)
         output_lines.append(new_line)
         i += 1
 
-    # Metadata Footer
+    # Metadata Generation
     output_lines.append("\ndeclare void @air.wg.barrier(i32, i32) local_unnamed_addr #1")
+
+    # Declarations for used intrinsics
+    for intr in sorted(all_used_intrinsics):
+        # We assume they are float in -> float out
+        # e.g. declare float @air.exp.f32(float)
+        # Handle pow which is float, float -> float
+        ret_type = "float"
+        arg_types = "(float)"
+        if "pow" in intr:
+            arg_types = "(float, float)"
+
+        name_only = intr.replace("@", "")
+        # Add pure attribute #2 (same as barrier for now or #0? Let's use #2 convergent nounwind willreturn which seems safe enough for math)
+        output_lines.append(f"declare {ret_type} @{name_only}{arg_types} #2")
     output_lines.append('attributes #0 = { argmemonly mustprogress nofree norecurse nosync nounwind willreturn "approx-func-fp-math"="true" "frame-pointer"="all" "min-legal-vector-width"="0" "no-builtins" "no-infs-fp-math"="true" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "unsafe-fp-math"="true" }')
     output_lines.append("attributes #1 = { convergent mustprogress nounwind willreturn }")
     output_lines.append("attributes #2 = { convergent nounwind willreturn }")
@@ -207,25 +335,22 @@ def to_air(llvm_ir_text: str) -> str:
         global_buffer_idx = 0
         threadgroup_buffer_idx = 0
 
-        for i, (at, an) in enumerate(args_list):
+        for idx, (at, an) in enumerate(args_list):
             template, as_id = _get_air_metadata_content(at, an)
-
             content = template
             if "{loc_index}" in template:
                 if as_id == 3:
-                    # Threadgroup memory
-                    idx = threadgroup_buffer_idx
+                    buf_idx = threadgroup_buffer_idx
                     threadgroup_buffer_idx += 1
                 else:
-                    # Default/Device memory
-                    idx = global_buffer_idx
+                    buf_idx = global_buffer_idx
                     global_buffer_idx += 1
-                content = content.replace("{loc_index}", str(idx))
+                content = content.replace("{loc_index}", str(buf_idx))
 
             if "air.arg_name" not in content:
                 content += f', !"air.arg_name", !"{an}"'
 
-            arg_meta_refs.append(m(f"!{{i32 {i}, {content}}}"))
+            arg_meta_refs.append(m(f"!{{i32 {idx}, {content}}}"))
 
         empty = m("!{}")
         meta_sig_parts = [x[0] for x in args_list]
@@ -234,6 +359,7 @@ def to_air(llvm_ir_text: str) -> str:
         kernel_node = f"!{meta_id}"
         meta_id += 1
 
+        # Standard AIR metadata
         lines.append(f'!{meta_id} = !{{!"air.compile.denorms_disable"}}')
         denorms = f"!{meta_id}"
         meta_id += 1
