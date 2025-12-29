@@ -62,6 +62,8 @@ To avoid "messy code," you must enforce the following:
 
 Make sure to look at everything implemented so far in `/test/*`. The goal is to cover all operations necessary to write a full tensor library for automatic differentiation with matmul, add, sub, mul, div and common activation functions with float32.
 
+If you feel confident, start implementing full algorithms like matmul and softmax to test multiple operations at once.
+
 Target functionality (already implemented):
 
 ```cpp
