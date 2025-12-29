@@ -39,7 +39,7 @@ def metallib_binary():
 def test_basic_swap(metallib_binary):
     input_data = [10.0, 20.0, 30.0, 40.0]
     expected = [20.0, 10.0, 40.0, 30.0]
-    result = run_kernel(metallib_binary, input_data)
+    result = run_kernel(metallib_binary, input_data, "test_kernel")
     assert result == expected
 
 
@@ -48,12 +48,12 @@ def test_larger_array(metallib_binary):
     # 0<->1, 2<->3, 4<->5, 6<->7
     # 0->1, 1->0, 2->3, 3->2, etc.
     expected = [1.0, 0.0, 3.0, 2.0, 5.0, 4.0, 7.0, 6.0]
-    result = run_kernel(metallib_binary, input_data)
+    result = run_kernel(metallib_binary, input_data, "test_kernel")
     assert result == expected
 
 
 def test_negative_values(metallib_binary):
     input_data = [-1.0, -2.0, 5.5, 6.5]
     expected = [-2.0, -1.0, 6.5, 5.5]
-    result = run_kernel(metallib_binary, input_data)
+    result = run_kernel(metallib_binary, input_data, "test_kernel")
     assert result == expected

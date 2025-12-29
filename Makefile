@@ -1,6 +1,6 @@
 .PHONY: test
 test:
-	PYTHONPATH=. uv run --with pytest --with pyobjc-framework-Metal --with pyobjc-framework-Cocoa pytest test/test_kernel.py
+	uv run --with pytest --with pyobjc-framework-Metal --with pyobjc-framework-Cocoa pytest test/test_kernel.py
 
 .PHONY: venv
 venv:

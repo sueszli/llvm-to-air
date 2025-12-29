@@ -21,7 +21,7 @@ def compile_to_metallib(llvm_ir: str) -> bytes:
         return Path(f_lib.name).read_bytes()
 
 
-def run_kernel(metallib_binary: bytes, input_data: list[float], kernel_name: str = "test_kernel") -> list[float]:
+def run_kernel(metallib_binary: bytes, input_data: list[float], kernel_name: str) -> list[float]:
     """Runs the kernel with the given input data."""
     device = Metal.MTLCreateSystemDefaultDevice()
     if not device:
