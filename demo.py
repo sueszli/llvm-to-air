@@ -47,19 +47,12 @@ class Compiler:
             return {"rows": int(node.children[0]), "cols": int(node.children[1]), "data": [float(val) for val in node.children[2:]]}
 
         if node.data == "matmul_expr":
-            return self.exec_matmul(self._eval(node.children[0]), self._eval(node.children[1]))
+            return self._exec_matmul(self._eval(node.children[0]), self._eval(node.children[1]))
 
         if node.data == "print_expr":
-            self.print_tensor(self._eval(node.children[0]))
+            self._print_tensor(self._eval(node.children[0]))
 
-    def _create_metal_buffer(self, device, data, length=None):
-        if length:
-            return device.newBufferWithLength_options_(length, Metal.MTLResourceStorageModeShared)
-
-        raw_array = (ctypes.c_float * len(data))(*data)
-        return device.newBufferWithBytes_length_options_(raw_array, ctypes.sizeof(raw_array), Metal.MTLResourceStorageModeShared)
-
-    def exec_matmul(self, A, B):
+    def _exec_matmul(self, A, B):
         M, K, K_rhs, N = A["rows"], A["cols"], B["rows"], B["cols"]
         assert K == K_rhs, f"dimension mismatch: {M}x{K} @ {K_rhs}x{N}"
 
@@ -72,18 +65,25 @@ class Compiler:
 
         m_bytes, n_bytes, k_bytes = (struct.pack("i", val) for val in (M, N, K))
 
-        def encode_args(encoder):
+        def _encode_args(encoder):
             for i, buf in enumerate([buf_a, buf_b, buf_c]):
                 encoder.setBuffer_offset_atIndex_(buf, 0, i)
             for i, val in enumerate([m_bytes, n_bytes, k_bytes]):
                 encoder.setBytes_length_atIndex_(val, 4, 3 + i)
 
-        execute_kernel(device, pso, Metal.MTLSize(M * N, 1, 1), Metal.MTLSize(1, 1, 1), encode_args)
+        execute_kernel(device, pso, Metal.MTLSize(M * N, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
 
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
-    def print_tensor(self, tensor):
+    def _create_metal_buffer(self, device, data, length=None):
+        if length:
+            return device.newBufferWithLength_options_(length, Metal.MTLResourceStorageModeShared)
+
+        raw_array = (ctypes.c_float * len(data))(*data)
+        return device.newBufferWithBytes_length_options_(raw_array, ctypes.sizeof(raw_array), Metal.MTLResourceStorageModeShared)
+
+    def _print_tensor(self, tensor):
         print(f"Tensor({tensor['rows']} x {tensor['cols']}):")
         cols = tensor["cols"]
         for i in range(tensor["rows"]):
