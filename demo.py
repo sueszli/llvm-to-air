@@ -283,9 +283,6 @@ class IRGen:
 
 
 if __name__ == "__main__":
-    # parse source code
     tree = Lark(GRAMMAR, start="start").parse(SOURCE)
-    # generate mlir module
     module_op = IRGen().gen(tree)
-    # properly print result to stdout
     print(module_op)
