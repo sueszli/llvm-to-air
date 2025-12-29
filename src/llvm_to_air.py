@@ -218,6 +218,73 @@ def _replace_intrinsics(line: str) -> Tuple[str, Set[str]]:
     return line, used_intr
 
 
+def _convert_type_cast(line: str) -> Tuple[str, Set[str]]:
+    """Converts LLVM type conversion instructions to Metal AIR intrinsics."""
+    used_intr = set()
+
+    # Helper to map LLVM type names to Metal AIR intrinsic type names
+    def get_air_type_name(llvm_type: str) -> str:
+        """Maps LLVM type to Metal AIR intrinsic type name."""
+        type_map = {
+            "float": "f32",
+            "double": "f64",
+            "i8": "i8",
+            "i16": "i16",
+            "i32": "i32",
+            "i64": "i64",
+        }
+        return type_map.get(llvm_type, llvm_type)
+
+    # Pattern: %result = uitofp i32 %val to float
+    # Becomes: %result = tail call fast float @air.convert.f.f32.u.i32(i32 %val)
+
+    # uitofp (unsigned int to float)
+    match = re.search(r"(%\S+)\s*=\s*uitofp\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", line)
+    if match:
+        result, src_type, src_val, dst_type = match.groups()
+        air_src = get_air_type_name(src_type)
+        air_dst = get_air_type_name(dst_type)
+        intr_name = f"@air.convert.f.{air_dst}.u.{air_src}"
+        new_line = f"  {result} = tail call fast {dst_type} {intr_name}({src_type} {src_val})"
+        used_intr.add(intr_name)
+        return (new_line, used_intr)
+
+    # sitofp (signed int to float)
+    match = re.search(r"(%\S+)\s*=\s*sitofp\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", line)
+    if match:
+        result, src_type, src_val, dst_type = match.groups()
+        air_src = get_air_type_name(src_type)
+        air_dst = get_air_type_name(dst_type)
+        intr_name = f"@air.convert.f.{air_dst}.s.{air_src}"
+        new_line = f"  {result} = tail call fast {dst_type} {intr_name}({src_type} {src_val})"
+        used_intr.add(intr_name)
+        return (new_line, used_intr)
+
+    # fptoui (float to unsigned int)
+    match = re.search(r"(%\S+)\s*=\s*fptoui\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", line)
+    if match:
+        result, src_type, src_val, dst_type = match.groups()
+        air_src = get_air_type_name(src_type)
+        air_dst = get_air_type_name(dst_type)
+        intr_name = f"@air.convert.u.{air_dst}.f.{air_src}"
+        new_line = f"  {result} = tail call {dst_type} {intr_name}({src_type} {src_val})"
+        used_intr.add(intr_name)
+        return (new_line, used_intr)
+
+    # fptosi (float to signed int)
+    match = re.search(r"(%\S+)\s*=\s*fptosi\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", line)
+    if match:
+        result, src_type, src_val, dst_type = match.groups()
+        air_src = get_air_type_name(src_type)
+        air_dst = get_air_type_name(dst_type)
+        intr_name = f"@air.convert.s.{air_dst}.f.{air_src}"
+        new_line = f"  {result} = tail call {dst_type} {intr_name}({src_type} {src_val})"
+        used_intr.add(intr_name)
+        return (new_line, used_intr)
+
+    return (line, used_intr)
+
+
 def _generate_metadata(kernels: List[Tuple[str, List[Tuple[str, str, bool]]]]) -> List[str]:
     """
     Generates Metal AIR metadata for a list of kernel functions.
@@ -352,8 +419,12 @@ def _convert_instruction(line: str, var_addrspaces: Dict[str, int]) -> Tuple[str
     if barrier_res:
         return barrier_res
 
+    # Handle type conversions
+    line, type_cast_intr = _convert_type_cast(line)
+
     # Handle intrinsics
     line, used_intr = _replace_intrinsics(line)
+    used_intr.update(type_cast_intr)  # Merge intrinsics
 
     # Replace pointers with addrspace pointers based on tracking
     new_line = _rewrite_pointers(line, var_addrspaces)
@@ -461,6 +532,35 @@ def to_air(llvm_ir_text: str) -> str:
 
     # Declarations for used intrinsics
     for intr in sorted(all_used_intrinsics):
+        # Handle air.convert intrinsics
+        if "air.convert" in intr:
+            # Pattern: @air.convert.f.f32.u.i32 -> declare float @air.convert.f.f32.u.i32(i32)
+            # Extract return type and arg type from intrinsic name
+            # The intrinsic name uses Metal AIR types (f32), but declarations use LLVM types (float)
+            def air_to_llvm_type(air_type: str) -> str:
+                """Maps Metal AIR type names back to LLVM IR type names."""
+                type_map = {
+                    "f32": "float",
+                    "f64": "double",
+                    "i8": "i8",
+                    "i16": "i16",
+                    "i32": "i32",
+                    "i64": "i64",
+                }
+                return type_map.get(air_type, air_type)
+
+            parts = intr.replace("@air.convert.", "").split(".")
+            if len(parts) >= 4:
+                # parts = ['f', 'f32', 'u', 'i32'] or ['u', 'i32', 'f', 'f32']
+                if parts[0] == "f":  # int to float
+                    ret_type = air_to_llvm_type(parts[1])
+                    arg_type = air_to_llvm_type(parts[3])
+                else:  # float to int (u or s)
+                    ret_type = air_to_llvm_type(parts[1])
+                    arg_type = air_to_llvm_type(parts[3])
+                output_lines.append(f"declare {ret_type} {intr}({arg_type}) #2")
+            continue
+
         # We assume they are float in -> float out
         # e.g. declare float @air.exp.f32(float)
         # Handle different signatures:
