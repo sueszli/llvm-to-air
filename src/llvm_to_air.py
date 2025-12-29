@@ -1,6 +1,8 @@
 import platform
 import re
 import sys
+import subprocess
+import shutil
 from typing import Dict, List, Set, Tuple
 
 AIR_TO_LLVM_TYPES = {
@@ -57,9 +59,30 @@ def get_type_info(type_str: str) -> Tuple[str, int, int]:
         return ("float", 4, 4)
 
 
+def get_metal_version() -> str:
+    """
+    Retrieves the installed Metal compiler version string.
+    Falls back to a default if not found.
+    """
+    default_version = 'Apple metal version 32023.830 (metalfe-32023.830.2)'
+    try:
+        metal_path = shutil.which("metal")
+        if metal_path:
+            # Run metal --version
+            result = subprocess.run([metal_path, "--version"], capture_output=True, text=True)
+            if result.returncode == 0:
+                # First line example: "Apple metal version 32023.830 (metalfe-32023.830.2)"
+                first_line = result.stdout.splitlines()[0]
+                if "Apple metal version" in first_line:
+                    return first_line.strip()
+    except Exception:
+        pass
+    return default_version
+
+
 class MetadataGenerator:
     @staticmethod
-    def emit(kernels: List[Tuple[str, List[Tuple[str, str, bool]]]], used_intrinsics: Set[str]) -> List[str]:
+    def emit(kernels: List[Tuple[str, List[Tuple[str, str, bool]]]], used_intrinsics: Set[str], metal_version_str: str = None) -> List[str]:
         lines = ["\ndeclare void @air.wg.barrier(i32, i32) local_unnamed_addr #1"]
 
         # signatures for used intrinsics (built in functions). mapping air types back to llvm types
@@ -73,7 +96,7 @@ class MetadataGenerator:
 
         # constructs metadata nodes linking kernels to their arguments and compile options
         if kernels:
-            lines.extend(MetadataGenerator._generate_kernel_metadata(kernels))
+            lines.extend(MetadataGenerator._generate_kernel_metadata(kernels, metal_version_str))
 
         return lines
 
@@ -107,7 +130,7 @@ class MetadataGenerator:
         return lines
 
     @staticmethod
-    def _generate_kernel_metadata(kernels: List[Tuple[str, List[Tuple[str, str, bool]]]]) -> List[str]:
+    def _generate_kernel_metadata(kernels: List[Tuple[str, List[Tuple[str, str, bool]]]], metal_version_str: str = None) -> List[str]:
         lines = []
         meta_id = 0
 
@@ -147,12 +170,14 @@ class MetadataGenerator:
             kernel_nodes.append(m(f"!{{{sig_str} @{func_name}, {empty}, !{{{', '.join(arg_meta_refs)}}}}}"))
 
         # standard descriptors
+        if not metal_version_str:
+             metal_version_str = 'Apple metal version 32023.830 (metalfe-32023.830.2)'
+
         descriptors = [
             '!"air.compile.denorms_disable"',
             '!"air.compile.fast_math_enable"',
             '!"air.compile.framebuffer_fetch_enable"',
-            # TODO: improve portability, infer this
-            '!"Apple metal version 32023.830 (metalfe-32023.830.2)"',
+            f'!"{metal_version_str}"',
         ]
 
         desc_refs = []
@@ -378,10 +403,14 @@ class AirTranslator:
 
     def translate(self) -> str:
         # architecture metadata
-        # TODO: improve portability, infer this
         self.output_lines.append('target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"')
-        assert platform.system() == "Darwin"
+        
+        # infer mac version for target triple
         mac_version = platform.mac_ver()[0]
+        # if mac_version is empty (not on mac or failed), default to something reasonable or let it fail later
+        if not mac_version:
+             mac_version = "14.0.0" 
+        
         self.output_lines.append(f'target triple = "air64_v27-apple-macosx{mac_version}"\n')
 
         # process each function
@@ -401,7 +430,8 @@ class AirTranslator:
             i += 1
 
         # generate metadata
-        self.output_lines.extend(MetadataGenerator.emit(self.kernels, self.used_intrinsics))
+        metal_version = get_metal_version()
+        self.output_lines.extend(MetadataGenerator.emit(self.kernels, self.used_intrinsics, metal_version))
         return "\n".join(self.output_lines)
 
     def _process_function(self, start_idx: int) -> int:
@@ -556,8 +586,12 @@ def to_air(llvm_ir_text: str, kernel_overrides: Dict[str, Dict[str, str]] = None
         and argument 2 as a writeable buffer.
     """
     assert llvm_ir_text
-    assert sys.platform == "darwin"
-    assert platform.machine() == "arm64"
+    
+    if sys.platform != "darwin":
+        raise RuntimeError(f"llvm-to-air is only supported on macOS (current: {sys.platform})")
+        
+    if platform.machine() != "arm64":
+        raise RuntimeError(f"llvm-to-air requires Apple Silicon (arm64) (current: {platform.machine()})")
 
     translator = AirTranslator(llvm_ir_text, kernel_overrides)
     return translator.translate()
