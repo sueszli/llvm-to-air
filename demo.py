@@ -1,9 +1,9 @@
 # /// script
 # dependencies = [
-#     "lark",
-#     "xdsl",
-#     "pyobjc-framework-Metal",
-#     "pyobjc-framework-Cocoa",
+#     "lark==1.3.1",
+#     "xdsl==0.56.0",
+#     "pyobjc-framework-metal==12.1",
+#     "pyobjc-framework-cocoa==12.1",
 # ]
 # ///
 

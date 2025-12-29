@@ -1,8 +1,8 @@
 import platform
 import re
-import sys
-import subprocess
 import shutil
+import subprocess
+import sys
 from typing import Dict, List, Set, Tuple
 
 AIR_TO_LLVM_TYPES = {
@@ -64,7 +64,7 @@ def get_metal_version() -> str:
     Retrieves the installed Metal compiler version string.
     Falls back to a default if not found.
     """
-    default_version = 'Apple metal version 32023.830 (metalfe-32023.830.2)'
+    default_version = "Apple metal version 32023.830 (metalfe-32023.830.2)"
     try:
         metal_path = shutil.which("metal")
         if metal_path:
@@ -171,7 +171,7 @@ class MetadataGenerator:
 
         # standard descriptors
         if not metal_version_str:
-             metal_version_str = 'Apple metal version 32023.830 (metalfe-32023.830.2)'
+            metal_version_str = "Apple metal version 32023.830 (metalfe-32023.830.2)"
 
         descriptors = [
             '!"air.compile.denorms_disable"',
@@ -404,13 +404,13 @@ class AirTranslator:
     def translate(self) -> str:
         # architecture metadata
         self.output_lines.append('target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"')
-        
+
         # infer mac version for target triple
         mac_version = platform.mac_ver()[0]
         # if mac_version is empty (not on mac or failed), default to something reasonable or let it fail later
         if not mac_version:
-             mac_version = "14.0.0" 
-        
+            mac_version = "14.0.0"
+
         self.output_lines.append(f'target triple = "air64_v27-apple-macosx{mac_version}"\n')
 
         # process each function
@@ -586,10 +586,10 @@ def to_air(llvm_ir_text: str, kernel_overrides: Dict[str, Dict[str, str]] = None
         and argument 2 as a writeable buffer.
     """
     assert llvm_ir_text
-    
+
     if sys.platform != "darwin":
         raise RuntimeError(f"llvm-to-air is only supported on macOS (current: {sys.platform})")
-        
+
     if platform.machine() != "arm64":
         raise RuntimeError(f"llvm-to-air requires Apple Silicon (arm64) (current: {platform.machine()})")
 
