@@ -38,8 +38,11 @@ NUMBER: /-?\d+(\.\d+)?/
 
 class IRGen:
     def __init__(self):
+        # create new empty module
         self.module = ModuleOp([])
+        # create builder pointing to end of module
         self.builder = Builder(InsertPoint.at_end(self.module.body.blocks[0]))
+        # cache for string globals
         self.str_cache = {}
         self.str_cnt = 0
 
@@ -53,12 +56,14 @@ class IRGen:
         self.builder.insert(llvm.FuncOp("printf", llvm.LLVMFunctionType([llvm.LLVMPointerType()], i32, is_variadic=True), linkage=llvm.LinkageAttr("external")))
 
     def gen(self, tree: Lark) -> ModuleOp:
-        # main function
+        # create entry block for main function
         entry_block = Block()
+        # create main function with i32 return type
         main_func = func.FuncOp("main", FunctionType.from_lists([], [i32]), Region(entry_block))
+        # add main function to module
         self.module.body.blocks[0].add_op(main_func)
 
-        # enter main function scope
+        # save previous builder and point new one to main function body
         prev_builder = self.builder
         self.builder = Builder(InsertPoint.at_end(entry_block))
 
@@ -66,29 +71,37 @@ class IRGen:
         for expr in tree.children:
             self._gen_expr(expr)
 
+        # create zero constant for return
         zero = self.builder.insert(arith.ConstantOp(IntegerAttr(0, i32))).results[0]
+        # return 0 from main
         self.builder.insert(func.ReturnOp(zero))
 
-        # leave main function scope
+        # restore builder to previous insertion point
         self.builder = prev_builder
 
         return self.module
 
     def _gen_expr(self, node):
         if node.data == "tensor_expr":
+            # parse rows/cols/data from parse tree
             rows = int(node.children[0])
             cols = int(node.children[1])
             data = [float(val) for val in node.children[2:]]
+            # verify data size matches dimensions
             assert len(data) == rows * cols, "data length mismatch with shape"
             return self._create_tensor(rows, cols, data)
 
         if node.data == "matmul_expr":
+            # recursively generate ir for lhs and rhs operands
             lhs = self._gen_expr(node.children[0])
             rhs = self._gen_expr(node.children[1])
+            # generate matmul code
             return self._matmul(lhs, rhs)
 
         if node.data == "print_expr":
+            # generate code for tensor to print
             val = self._gen_expr(node.children[0])
+            # call print helper
             self._print_tensor(val)
             return None
 
@@ -142,43 +155,55 @@ class IRGen:
         bytes_32 = self.builder.insert(arith.MuliOp(size, c_8)).results[0]
         bytes_64 = self.builder.insert(arith.ExtUIOp(bytes_32, i64)).results[0]
 
+        # allocate result tensor
         res_ptr = self.builder.insert(llvm.CallOp(SymbolAttr("malloc"), bytes_64, return_type=llvm.LLVMPointerType())).results[0]
 
+        # constants for loop bounds
         c0 = self.builder.insert(arith.ConstantOp(IntegerAttr(0, i32))).results[0]
         c1 = self.builder.insert(arith.ConstantOp(IntegerAttr(1, i32))).results[0]
 
+        # create outer loop (i) from 0 to lhs_rows
         loop_i = self.builder.insert(scf.ForOp(c0, lhs_rows, c1, [], [Block(arg_types=[i32])]))
         b_i = Builder(InsertPoint.at_end(loop_i.body.blocks[0]))
         i = loop_i.body.blocks[0].args[0]
 
+        # create inner loop (j) from 0 to rhs_cols
         loop_j = b_i.insert(scf.ForOp(c0, rhs_cols, c1, [], [Block(arg_types=[i32])]))
         b_j = Builder(InsertPoint.at_end(loop_j.body.blocks[0]))
         j = loop_j.body.blocks[0].args[0]
 
+        # init accumulation sum to 0.0
         c0_f = b_j.insert(arith.ConstantOp(FloatAttr(0.0, f64))).results[0]
 
+        # create k loop from 0 to lhs_cols with sum reduction
         loop_k = b_j.insert(scf.ForOp(c0, lhs_cols, c1, [c0_f], [Block(arg_types=[i32, f64])]))
         b_k = Builder(InsertPoint.at_end(loop_k.body.blocks[0]))
         k = loop_k.body.blocks[0].args[0]
         curr_sum = loop_k.body.blocks[0].args[1]
 
+        # calc lhs index: i * lhs_cols + k
         idx_lhs_temp = b_k.insert(arith.MuliOp(i, lhs_cols)).results[0]
         idx_lhs = b_k.insert(arith.AddiOp(idx_lhs_temp, k)).results[0]
         lhs_elem_ptr = b_k.insert(llvm.GEPOp(lhs_ptr, [llvm.GEP_USE_SSA_VAL], f64, ssa_indices=[idx_lhs])).results[0]
         lhs_val = b_k.insert(llvm.LoadOp(lhs_elem_ptr, f64)).results[0]
 
+        # calc rhs index: k * rhs_cols + j
         idx_rhs_temp = b_k.insert(arith.MuliOp(k, rhs_cols)).results[0]
         idx_rhs = b_k.insert(arith.AddiOp(idx_rhs_temp, j)).results[0]
         rhs_elem_ptr = b_k.insert(llvm.GEPOp(rhs_ptr, [llvm.GEP_USE_SSA_VAL], f64, ssa_indices=[idx_rhs])).results[0]
         rhs_val = b_k.insert(llvm.LoadOp(rhs_elem_ptr, f64)).results[0]
 
+        # compute product and accumulate
         mul = b_k.insert(arith.MulfOp(lhs_val, rhs_val)).results[0]
         new_sum = b_k.insert(arith.AddfOp(curr_sum, mul)).results[0]
 
+        # yield new sum for next iteration
         b_k.insert(scf.YieldOp(new_sum))
 
+        # get final sum from reduction
         final_sum = loop_k.results[0]
 
+        # calc res index: i * rhs_cols + j
         idx_res_temp = b_j.insert(arith.MuliOp(i, rhs_cols)).results[0]
         idx_res = b_j.insert(arith.AddiOp(idx_res_temp, j)).results[0]
         res_elem_ptr = b_j.insert(llvm.GEPOp(res_ptr, [llvm.GEP_USE_SSA_VAL], f64, ssa_indices=[idx_res])).results[0]
@@ -187,6 +212,7 @@ class IRGen:
         b_j.insert(scf.YieldOp())
         b_i.insert(scf.YieldOp())
 
+        # construct result struct
         struct_type = llvm.LLVMStructType.from_type_list([llvm.LLVMPointerType(), i32, i32])
         struct_val = self.builder.insert(llvm.UndefOp(struct_type)).results[0]
         struct_val = self.builder.insert(llvm.InsertValueOp(DenseArrayBase.from_list(i64, [0]), struct_val, res_ptr)).results[0]
@@ -220,7 +246,7 @@ class IRGen:
         b_j = Builder(InsertPoint.at_end(loop_j.body.blocks[0]))
         j = loop_j.body.blocks[0].args[0]
 
-        # Load val
+        # load val
         idx_temp = b_j.insert(arith.MuliOp(i, cols)).results[0]
         idx = b_j.insert(arith.AddiOp(idx_temp, j)).results[0]
         elem_ptr = b_j.insert(llvm.GEPOp(ptr, [llvm.GEP_USE_SSA_VAL], f64, ssa_indices=[idx])).results[0]
@@ -232,6 +258,7 @@ class IRGen:
         call_op.attributes["var_callee_type"] = printf_type
         b_j.insert(call_op)
 
+        # end of inner loop
         b_j.insert(scf.YieldOp())
 
         # printf("\n")
@@ -267,6 +294,9 @@ class IRGen:
 
 
 if __name__ == "__main__":
+    # parse source code
     tree = Lark(GRAMMAR, start="start").parse(SOURCE)
+    # generate mlir module
     module_op = IRGen().gen(tree)
+    # properly print result to stdout
     print(module_op)
