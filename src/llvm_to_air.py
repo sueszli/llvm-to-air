@@ -51,6 +51,9 @@ def get_type_info(type_str: str) -> Tuple[str, int, int]:
         return ("short", 2, 2)
     if "i8" in t:
         return ("char", 1, 1)
+    if "ptr" in t:
+        # default to float for opaque pointers
+        return ("float", 4, 4)
 
 
 class MetadataGenerator:
@@ -175,7 +178,7 @@ class MetadataGenerator:
     @staticmethod
     def _get_air_metadata_content(arg_type: str, arg_name: str, is_output: bool) -> Tuple[str, int]:
         # id / grid position
-        if arg_name in ["id", "gid", "global_id"]:
+        if arg_name in ["id", "gid", "global_id", "6"]:
             return ('!"air.thread_position_in_grid", !"air.arg_type_name", !"uint"', 0)
         if arg_name in ["tid", "lid", "local_id"]:
             return ('!"air.thread_position_in_threadgroup", !"air.arg_type_name", !"uint"', 0)
@@ -308,7 +311,7 @@ class SignatureParser:
     @staticmethod
     def _process_single_argument(a_type: str, clean_name: str, name_no_prefix: str, var_addrspaces: Dict[str, int], scalar_loads: Dict[str, str]) -> Tuple[str, bool, str]:
         # iterates through the function arguments and transforms them based on whether they are buffers (pointers) or scalars (values)
-        if "*" in a_type:
+        if "*" in a_type or a_type == "ptr":
             return SignatureParser._process_buffer_argument(a_type, clean_name, var_addrspaces)
         return SignatureParser._process_scalar_argument(a_type, clean_name, name_no_prefix, var_addrspaces, scalar_loads)
 
@@ -320,7 +323,9 @@ class SignatureParser:
         is_output = any(x in clean_name.lower() for x in ["out", "result"]) or clean_name in ["%C", "%c"]
 
         res_type = a_type
-        if "addrspace" not in a_type:
+        if a_type == "ptr":  # default to float for opaque pointers
+            res_type = f"float addrspace({as_id})*"
+        elif "addrspace" not in a_type:
             res_type = a_type.replace("*", f" addrspace({as_id})*")
 
         sig_part = f'{res_type} nocapture noundef "air-buffer-no-alias" {clean_name}'
@@ -329,7 +334,7 @@ class SignatureParser:
     @staticmethod
     def _process_scalar_argument(a_type: str, clean_name: str, name_no_prefix: str, var_addrspaces: Dict[str, int], scalar_loads: Dict[str, str]) -> Tuple[str, bool, str]:
         # thread ID checks
-        if name_no_prefix in ["id", "gid", "global_id", "tid", "lid", "local_id"]:
+        if name_no_prefix in ["id", "gid", "global_id", "tid", "lid", "local_id", "6"]:
             var_addrspaces[clean_name] = 0
             return a_type, False, f"{a_type} {clean_name}"
 
@@ -342,7 +347,7 @@ class SignatureParser:
         sig_part = f'{ptr_type} nocapture noundef readonly align {align} dereferenceable({size}) "air-buffer-no-alias" {clean_name}'
 
         # setup load map
-        scalar_loads[clean_name] = f"%{name_no_prefix}.loaded"
+        scalar_loads[clean_name] = f"%val_{name_no_prefix}"
         return ptr_type, False, sig_part
 
 
@@ -457,6 +462,7 @@ class AirTranslator:
 
         # rewrite pointers
         line = self._rewrite_pointers(line)
+        line = self._rewrite_opaque_pointers(line)
 
         # propagate address spaces
         self._propagate_address_spaces(line)
@@ -475,6 +481,15 @@ class AirTranslator:
 
         return re.sub(r"([\w\s<>\.]+)\*\s+(%[\w\.\"]+)", replacer, line)
 
+    def _rewrite_opaque_pointers(self, line: str) -> str:
+        def replacer(m):
+            var_part = m.group(1)
+            as_id = self.var_addrspaces.get(var_part, 0)
+            # assume float for opaque pointers
+            return f"float addrspace({as_id})* {var_part}" if as_id > 0 else m.group(0)
+
+        return re.sub(r"\bptr\s+(%[\w\.\"]+)", replacer, line)
+
     def _propagate_address_spaces(self, line: str):
         if "=" not in line:
             return
@@ -485,7 +500,8 @@ class AirTranslator:
 
         lhs_var = lhs_match.group(1)
         if any(x in line for x in ["getelementptr", "bitcast", "select"]):
-            as_match = re.search(r"addrspace\((\d+)\)\*", line)
+            # addrspace(N)* | ptr addrspace(N)
+            as_match = re.search(r"addrspace\((\d+)\)", line)
             if as_match:
                 self.var_addrspaces[lhs_var] = int(as_match.group(1))
 
