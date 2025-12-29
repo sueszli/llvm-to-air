@@ -383,7 +383,12 @@ class AirTranslator:
             kernel_nodes.append(m(f"!{{{sig_str} @{func_name}, {empty}, !{{{', '.join(arg_meta_refs)}}}}}"))
 
         # Standard descriptors
-        descriptors = ['!"air.compile.denorms_disable"', '!"air.compile.fast_math_enable"', '!"air.compile.framebuffer_fetch_enable"', '!"Apple metal version 32023.830 (metalfe-32023.830.2)"']
+        descriptors = [
+            '!"air.compile.denorms_disable"',
+            '!"air.compile.fast_math_enable"',
+            '!"air.compile.framebuffer_fetch_enable"',
+            '!"Apple metal version 32023.830 (metalfe-32023.830.2)"',
+        ]
 
         desc_refs = []
         for d in descriptors:
