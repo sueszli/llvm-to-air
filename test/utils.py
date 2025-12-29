@@ -1,5 +1,6 @@
 import ctypes
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -7,11 +8,16 @@ import Foundation
 import Metal
 import pytest
 
+# required so we can import from src
+root_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(root_dir))
+
 from src.llvm_to_air import to_air
 
 
 def compile_to_metallib(llvm_ir: str) -> bytes:
     air_llvm_text = to_air(llvm_ir)
+
     with tempfile.NamedTemporaryFile(suffix=".ll") as f_ll, tempfile.NamedTemporaryFile(suffix=".air") as f_air, tempfile.NamedTemporaryFile(suffix=".metallib") as f_lib:
         f_ll.write(air_llvm_text.encode("utf-8"))
         f_ll.flush()
@@ -22,7 +28,6 @@ def compile_to_metallib(llvm_ir: str) -> bytes:
 
 
 def run_kernel(metallib_binary: bytes, input_data: list[float], kernel_name: str) -> list[float]:
-    """Runs the kernel with the given input data."""
     device = Metal.MTLCreateSystemDefaultDevice()
     if not device:
         pytest.skip("Metal not supported on this device")
