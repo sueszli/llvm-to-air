@@ -1,6 +1,3 @@
-# /// script
-# dependencies = ["pytest", "pyobjc-framework-Metal", "pyobjc-framework-Cocoa"]
-# ///
 import pytest
 from utils import compile_to_metallib, run_kernel
 
