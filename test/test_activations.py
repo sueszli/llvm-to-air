@@ -3,7 +3,7 @@ import math
 import pytest
 from utils import compile_to_metallib, run_kernel_1d_float
 
-# ReLU: out[i] = max(0.0, in[i])
+# relu: out[i] = max(0.0, in[i])
 LLVM_IR_RELU = """
 define void @relu_kernel(float* %a, float* %b, i32 %id) {
 entry:
