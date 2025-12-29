@@ -146,7 +146,8 @@ class MetadataGenerator:
             '!"air.compile.denorms_disable"',
             '!"air.compile.fast_math_enable"',
             '!"air.compile.framebuffer_fetch_enable"',
-            '!"Apple metal version 32023.830 (metalfe-32023.830.2)"',  # TODO: can this be inferred?
+            # TODO: improve portability, infer this
+            '!"Apple metal version 32023.830 (metalfe-32023.830.2)"',
         ]
 
         desc_refs = []
@@ -248,8 +249,7 @@ class SignatureParser:
         pkg, idx = SignatureParser._read_signature_lines(lines, start_idx)
 
         sig_match = re.search(r"define\s+void\s+@\"?([\w\.]+)\"?\s*\((.*?)\).*?{", pkg, re.DOTALL)
-        if not sig_match:
-            raise ValueError(f"Failed to parse function signature: {pkg}")
+        assert sig_match, f"Failed to parse function signature: {pkg}"
 
         func_name = sig_match.group(1).replace('"', "")
         raw_args = sig_match.group(2)
@@ -349,8 +349,14 @@ class AirTranslator:
         self.used_intrinsics: Set[str] = set()
 
     def translate(self) -> str:
-        self._write_header()
+        # architecture metadata
+        # TODO: improve portability, infer this
+        self.output_lines.append('target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"')
+        assert platform.system() == "Darwin"
+        mac_version = platform.mac_ver()[0]
+        self.output_lines.append(f'target triple = "air64_v27-apple-macosx{mac_version}"\n')
 
+        # process each function
         i = 0
         while i < len(self.lines):
             line = self.lines[i]
@@ -360,7 +366,7 @@ class AirTranslator:
                 i = self._process_function(i)
                 continue
 
-            # comments and metadata
+            # copy comments
             if stripped.startswith(";") or stripped.endswith(":"):
                 self.output_lines.append(line)
 
@@ -368,13 +374,6 @@ class AirTranslator:
 
         self.output_lines.extend(MetadataGenerator.emit(self.kernels, self.used_intrinsics))
         return "\n".join(self.output_lines)
-
-    def _write_header(self):
-        # architecture info (don't know how to make this portable)
-        self.output_lines.append('target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"')
-        assert platform.system() == "Darwin"
-        mac_version = platform.mac_ver()[0]
-        self.output_lines.append(f'target triple = "air64_v27-apple-macosx{mac_version}"\n')
 
     def _process_function(self, start_idx: int) -> int:
         self.var_addrspaces = {}
