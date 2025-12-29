@@ -272,10 +272,7 @@ if __name__ == "__main__":
 
     air_llvm_text = to_air(src_llvm_text)
     with tempfile.NamedTemporaryFile(suffix=".ll") as f_ll, tempfile.NamedTemporaryFile(suffix=".air") as f_air, tempfile.NamedTemporaryFile(suffix=".metallib") as f_lib:
-
         f_ll.write(air_llvm_text.encode("utf-8"))
         f_ll.flush()
-
-        # compile air
         os.system(f"xcrun -sdk macosx metal -x ir -c {f_ll.name} -o {f_air.name} && xcrun -sdk macosx metallib {f_air.name} -o {f_lib.name}")
         verify_kernel(Path(f_lib.name).read_bytes())
