@@ -190,6 +190,148 @@ class MetadataGenerator:
         return (f'!"air.arg_type_name", !"{arg_type.strip()}"', 0)
 
 
+class IntrinsicHandler:
+    @staticmethod
+    def handle_type_casts(line: str, used_intrinsics: Set[str]) -> str:
+        conversions = [
+            (r"(%\S+)\s*=\s*uitofp\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.f.{dst}.u.{src}"),
+            (r"(%\S+)\s*=\s*sitofp\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.f.{dst}.s.{src}"),
+            (r"(%\S+)\s*=\s*fptoui\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.u.{dst}.f.{src}"),
+            (r"(%\S+)\s*=\s*fptosi\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.s.{dst}.f.{src}"),
+        ]
+
+        for pattern, intr_template in conversions:
+            match = re.search(pattern, line)
+            if match:
+                res, src_t, src_v, dst_t = match.groups()
+                air_src = LLVM_TO_AIR_TYPES.get(src_t, src_t)
+                air_dst = LLVM_TO_AIR_TYPES.get(dst_t, dst_t)
+                intr = intr_template.format(src=air_src, dst=air_dst)
+
+                used_intrinsics.add(intr)
+
+                # determine call attributes
+                call_attrs = "tail call fast" if "uitofp" in pattern or "sitofp" in pattern else "tail call"
+                return f"  {res} = {call_attrs} {dst_t} {intr}({src_t} {src_v})"
+
+        return line
+
+    @staticmethod
+    def replace_intrinsics(line: str, used_intrinsics: Set[str]) -> str:
+        if "call" not in line:
+            return line
+
+        math_ops = ["exp", "log", "sin", "cos", "sqrt", "ceil", "floor", "fabs", "pow", "tanh", "fma", "trunc", "round"]
+        for op in math_ops:
+            llvm_intr = f"@llvm.{op}.f32"
+            air_intr = f"@air.{op}.f32"
+            if llvm_intr in line:
+                line = line.replace(llvm_intr, air_intr)
+                used_intrinsics.add(air_intr)
+
+        # special mappings
+        replacements = {"@llvm.minnum.f32": "@air.fmin.f32", "@llvm.maxnum.f32": "@air.fmax.f32"}
+        for old, new in replacements.items():
+            if old in line:
+                line = line.replace(old, new)
+                used_intrinsics.add(new)
+
+        return line
+
+
+class SignatureParser:
+    @staticmethod
+    def parse(lines: List[str], start_idx: int) -> Tuple[str, List[Tuple[str, str, bool]], str, int, Dict[str, int], Dict[str, str]]:
+        """Parses function signature and sets up argument tracking."""
+        pkg, idx = SignatureParser._read_signature_lines(lines, start_idx)
+
+        sig_match = re.search(r"define\s+void\s+@\"?([\w\.]+)\"?\s*\((.*?)\).*?{", pkg, re.DOTALL)
+        if not sig_match:
+            raise ValueError(f"Failed to parse function signature: {pkg}")
+
+        func_name = sig_match.group(1).replace('"', "")
+        raw_args = sig_match.group(2)
+
+        var_addrspaces: Dict[str, int] = {}
+        scalar_loads: Dict[str, str] = {}
+
+        args_list, new_sig_parts = SignatureParser._process_arguments(raw_args, var_addrspaces, scalar_loads)
+
+        air_sig = f'define void @{func_name}({", ".join(new_sig_parts)}) #0 {{'
+        return func_name, args_list, air_sig, idx + 1, var_addrspaces, scalar_loads
+
+    @staticmethod
+    def _read_signature_lines(lines: List[str], start_idx: int) -> Tuple[str, int]:
+        pkg = lines[start_idx]
+        i = start_idx
+        while "{" not in pkg:
+            i += 1
+            pkg += " " + lines[i]
+        return pkg, i
+
+    @staticmethod
+    def _process_arguments(raw_args: str, var_addrspaces: Dict[str, int], scalar_loads: Dict[str, str]) -> Tuple[List[Tuple[str, str, bool]], List[str]]:
+        arg_chunks = [x.strip() for x in raw_args.split(",")] if raw_args.strip() else []
+        new_sig_parts = []
+        args_list = []
+
+        for arg_chunk in arg_chunks:
+            if not arg_chunk:
+                continue
+
+            parts = arg_chunk.split()
+            a_name = parts[-1]
+            a_type = " ".join(parts[:-1])
+            clean_name = a_name.strip()
+            name_no_prefix = clean_name.replace("%", "").replace('"', "")
+
+            res_type, is_output, sig_part = SignatureParser._process_single_argument(a_type, clean_name, name_no_prefix, var_addrspaces, scalar_loads)
+
+            new_sig_parts.append(sig_part)
+            args_list.append((res_type, name_no_prefix, is_output))
+
+        return args_list, new_sig_parts
+
+    @staticmethod
+    def _process_single_argument(a_type: str, clean_name: str, name_no_prefix: str, var_addrspaces: Dict[str, int], scalar_loads: Dict[str, str]) -> Tuple[str, bool, str]:
+        if "*" in a_type:
+            return SignatureParser._process_buffer_argument(a_type, clean_name, var_addrspaces)
+        return SignatureParser._process_scalar_argument(a_type, clean_name, name_no_prefix, var_addrspaces, scalar_loads)
+
+    @staticmethod
+    def _process_buffer_argument(a_type: str, clean_name: str, var_addrspaces: Dict[str, int]) -> Tuple[str, bool, str]:
+        as_id = 3 if "shared" in clean_name else 1
+        var_addrspaces[clean_name] = as_id
+
+        is_output = any(x in clean_name.lower() for x in ["out", "result"]) or clean_name in ["%C", "%c"]
+
+        res_type = a_type
+        if "addrspace" not in a_type:
+            res_type = a_type.replace("*", f" addrspace({as_id})*")
+
+        sig_part = f'{res_type} nocapture noundef "air-buffer-no-alias" {clean_name}'
+        return res_type, is_output, sig_part
+
+    @staticmethod
+    def _process_scalar_argument(a_type: str, clean_name: str, name_no_prefix: str, var_addrspaces: Dict[str, int], scalar_loads: Dict[str, str]) -> Tuple[str, bool, str]:
+        # thread ID checks
+        if name_no_prefix in ["id", "gid", "global_id", "tid", "lid", "local_id"]:
+            var_addrspaces[clean_name] = 0
+            return a_type, False, f"{a_type} {clean_name}"
+
+        # regular scalar -> constant buffer conversion
+        base_type = a_type.strip()
+        ptr_type = f"{base_type} addrspace(2)*"
+        _, size, align = get_type_info(base_type)
+
+        var_addrspaces[clean_name] = 2
+        sig_part = f'{ptr_type} nocapture noundef readonly align {align} dereferenceable({size}) "air-buffer-no-alias" {clean_name}'
+
+        # setup load map
+        scalar_loads[clean_name] = f"%{name_no_prefix}.loaded"
+        return ptr_type, False, sig_part
+
+
 class AirTranslator:
     def __init__(self, llvm_ir: str):
         self.lines = llvm_ir.splitlines()
@@ -222,10 +364,6 @@ class AirTranslator:
         self.output_lines.extend(MetadataGenerator.emit(self.kernels, self.used_intrinsics))
         return "\n".join(self.output_lines)
 
-    #
-    # write header
-    #
-
     def _write_header(self):
         # architecture info (don't know how to make this portable)
         self.output_lines.append('target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"')
@@ -233,15 +371,11 @@ class AirTranslator:
         mac_version = platform.mac_ver()[0]
         self.output_lines.append(f'target triple = "air64_v27-apple-macosx{mac_version}"\n')
 
-    #
-    # process function
-    #
-
     def _process_function(self, start_idx: int) -> int:
         self.var_addrspaces = {}
         self.scalar_loads = {}
 
-        func_name, args_list, air_sig, idx = self._parse_signature(start_idx)
+        func_name, args_list, air_sig, idx, self.var_addrspaces, self.scalar_loads = SignatureParser.parse(self.lines, start_idx)
         self.kernels.append((func_name, args_list))
         self.output_lines.append(air_sig)
 
@@ -260,96 +394,6 @@ class AirTranslator:
         self._insert_scalar_loads(args_list)
         return self._convert_body(idx)
 
-    #
-    # parse signature
-    #
-
-    def _parse_signature(self, start_idx: int) -> Tuple[str, List[Tuple[str, str, bool]], str, int]:
-        """Parses function signature and sets up argument tracking."""
-        pkg, idx = self._read_signature_lines(start_idx)
-
-        sig_match = re.search(r"define\s+void\s+@\"?([\w\.]+)\"?\s*\((.*?)\).*?{", pkg, re.DOTALL)
-        if not sig_match:
-            raise ValueError(f"Failed to parse function signature: {pkg}")
-
-        func_name = sig_match.group(1).replace('"', "")
-        raw_args = sig_match.group(2)
-
-        args_list, new_sig_parts = self._process_arguments(raw_args)
-
-        air_sig = f'define void @{func_name}({", ".join(new_sig_parts)}) #0 {{'
-        return func_name, args_list, air_sig, idx + 1
-
-    def _read_signature_lines(self, start_idx: int) -> Tuple[str, int]:
-        pkg = self.lines[start_idx]
-        i = start_idx
-        while "{" not in pkg:
-            i += 1
-            pkg += " " + self.lines[i]
-        return pkg, i
-
-    def _process_arguments(self, raw_args: str) -> Tuple[List[Tuple[str, str, bool]], List[str]]:
-        arg_chunks = [x.strip() for x in raw_args.split(",")] if raw_args.strip() else []
-        new_sig_parts = []
-        args_list = []
-
-        for arg_chunk in arg_chunks:
-            if not arg_chunk:
-                continue
-
-            parts = arg_chunk.split()
-            a_name = parts[-1]
-            a_type = " ".join(parts[:-1])
-            clean_name = a_name.strip()
-            name_no_prefix = clean_name.replace("%", "").replace('"', "")
-
-            res_type, is_output, sig_part = self._process_single_argument(a_type, clean_name, name_no_prefix)
-
-            new_sig_parts.append(sig_part)
-            args_list.append((res_type, name_no_prefix, is_output))
-
-        return args_list, new_sig_parts
-
-    def _process_single_argument(self, a_type: str, clean_name: str, name_no_prefix: str) -> Tuple[str, bool, str]:
-        if "*" in a_type:
-            return self._process_buffer_argument(a_type, clean_name)
-        return self._process_scalar_argument(a_type, clean_name, name_no_prefix)
-
-    def _process_buffer_argument(self, a_type: str, clean_name: str) -> Tuple[str, bool, str]:
-        as_id = 3 if "shared" in clean_name else 1
-        self.var_addrspaces[clean_name] = as_id
-
-        is_output = any(x in clean_name.lower() for x in ["out", "result"]) or clean_name in ["%C", "%c"]
-
-        res_type = a_type
-        if "addrspace" not in a_type:
-            res_type = a_type.replace("*", f" addrspace({as_id})*")
-
-        sig_part = f'{res_type} nocapture noundef "air-buffer-no-alias" {clean_name}'
-        return res_type, is_output, sig_part
-
-    def _process_scalar_argument(self, a_type: str, clean_name: str, name_no_prefix: str) -> Tuple[str, bool, str]:
-        # thread ID checks
-        if name_no_prefix in ["id", "gid", "global_id", "tid", "lid", "local_id"]:
-            self.var_addrspaces[clean_name] = 0
-            return a_type, False, f"{a_type} {clean_name}"
-
-        # regular scalar -> constant buffer conversion
-        base_type = a_type.strip()
-        ptr_type = f"{base_type} addrspace(2)*"
-        _, size, align = get_type_info(base_type)
-
-        self.var_addrspaces[clean_name] = 2
-        sig_part = f'{ptr_type} nocapture noundef readonly align {align} dereferenceable({size}) "air-buffer-no-alias" {clean_name}'
-
-        # setup load map
-        self.scalar_loads[clean_name] = f"%{name_no_prefix}.loaded"
-        return ptr_type, False, sig_part
-
-    #
-    # skip comments
-    #
-
     def _skip_comments_and_empty(self, idx: int) -> int:
         while idx < len(self.lines):
             stripped = self.lines[idx].strip()
@@ -360,10 +404,6 @@ class AirTranslator:
             break
         return idx
 
-    #
-    # insert scalar loads
-    #
-
     def _insert_scalar_loads(self, args_list: List[Tuple[str, str, bool]]):
         for param_name, loaded_var in self.scalar_loads.items():
             # find base type from args_list for the load instruction
@@ -372,10 +412,6 @@ class AirTranslator:
 
             if base_type:
                 self.output_lines.append(f"  {loaded_var} = load {base_type}, {base_type} addrspace(2)* {param_name}, align 4")
-
-    #
-    # convert body
-    #
 
     def _convert_body(self, idx: int) -> int:
         while idx < len(self.lines):
@@ -400,10 +436,10 @@ class AirTranslator:
             return "  tail call void @air.wg.barrier(i32 2, i32 1) #2"
 
         # handle type casts
-        line = self._handle_type_casts(line)
+        line = IntrinsicHandler.handle_type_casts(line, self.used_intrinsics)
 
         # handle intrinsics
-        line = self._replace_intrinsics(line)
+        line = IntrinsicHandler.replace_intrinsics(line, self.used_intrinsics)
 
         # rewrite pointers
         line = self._rewrite_pointers(line)
@@ -413,52 +449,6 @@ class AirTranslator:
 
         # replace scalar loads
         line = self._apply_scalar_loads(line)
-
-        return line
-
-    def _handle_type_casts(self, line: str) -> str:
-        # define conversion patterns
-        conversions = [
-            (r"(%\S+)\s*=\s*uitofp\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.f.{dst}.u.{src}"),
-            (r"(%\S+)\s*=\s*sitofp\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.f.{dst}.s.{src}"),
-            (r"(%\S+)\s*=\s*fptoui\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.u.{dst}.f.{src}"),
-            (r"(%\S+)\s*=\s*fptosi\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.s.{dst}.f.{src}"),
-        ]
-
-        for pattern, intr_template in conversions:
-            match = re.search(pattern, line)
-            if match:
-                res, src_t, src_v, dst_t = match.groups()
-                air_src = LLVM_TO_AIR_TYPES.get(src_t, src_t)
-                air_dst = LLVM_TO_AIR_TYPES.get(dst_t, dst_t)
-                intr = intr_template.format(src=air_src, dst=air_dst)
-
-                self.used_intrinsics.add(intr)
-
-                # determine call attributes
-                call_attrs = "tail call fast" if "uitofp" in pattern or "sitofp" in pattern else "tail call"
-                return f"  {res} = {call_attrs} {dst_t} {intr}({src_t} {src_v})"
-
-        return line
-
-    def _replace_intrinsics(self, line: str) -> str:
-        if "call" not in line:
-            return line
-
-        math_ops = ["exp", "log", "sin", "cos", "sqrt", "ceil", "floor", "fabs", "pow", "tanh", "fma", "trunc", "round"]
-        for op in math_ops:
-            llvm_intr = f"@llvm.{op}.f32"
-            air_intr = f"@air.{op}.f32"
-            if llvm_intr in line:
-                line = line.replace(llvm_intr, air_intr)
-                self.used_intrinsics.add(air_intr)
-
-        # special mappings
-        replacements = {"@llvm.minnum.f32": "@air.fmin.f32", "@llvm.maxnum.f32": "@air.fmax.f32"}
-        for old, new in replacements.items():
-            if old in line:
-                line = line.replace(old, new)
-                self.used_intrinsics.add(new)
 
         return line
 
@@ -491,10 +481,6 @@ class AirTranslator:
             param_pattern = re.escape(param_name) + r"\b"
             line = re.sub(param_pattern, loaded_var, line)
         return line
-
-    #
-    # emit metadata
-    #
 
 
 def to_air(llvm_ir_text: str) -> str:
