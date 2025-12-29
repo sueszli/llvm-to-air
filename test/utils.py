@@ -7,7 +7,6 @@ from pathlib import Path
 import Foundation
 import Metal
 
-# required so we can import from src
 root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 
