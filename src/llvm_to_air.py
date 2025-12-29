@@ -55,12 +55,20 @@ class AirTranslator:
         self._emit_metadata()
         return "\n".join(self.output_lines)
 
+    #
+    # write header
+    #
+
     def _write_header(self):
         # architecture info (don't know how to make this portable)
         self.output_lines.append('target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"')
         assert platform.system() == "Darwin"
         mac_version = platform.mac_ver()[0]
         self.output_lines.append(f'target triple = "air64_v27-apple-macosx{mac_version}"\n')
+
+    #
+    # process function
+    #
 
     def _process_function(self, start_idx: int) -> int:
         self.var_addrspaces = {}
@@ -85,32 +93,9 @@ class AirTranslator:
         self._insert_scalar_loads(args_list)
         return self._convert_body(idx)
 
-    def _skip_comments_and_empty(self, idx: int) -> int:
-        while idx < len(self.lines):
-            stripped = self.lines[idx].strip()
-            if not stripped or stripped.startswith(";"):
-                self.output_lines.append(self.lines[idx])
-                idx += 1
-                continue
-            break
-        return idx
-
-    def _convert_body(self, idx: int) -> int:
-        while idx < len(self.lines):
-            line = self.lines[idx]
-            stripped = line.strip()
-
-            if stripped == "}":
-                self.output_lines.append("}")
-                return idx + 1
-
-            if stripped.startswith(";") or stripped.endswith(":"):
-                self.output_lines.append(line)
-            else:
-                self.output_lines.append(self._convert_instruction(line))
-
-            idx += 1
-        return idx
+    #
+    # parse signature
+    #
 
     def _parse_signature(self, start_idx: int) -> Tuple[str, List[Tuple[str, str, bool]], str, int]:
         """Parses function signature and sets up argument tracking."""
@@ -177,12 +162,12 @@ class AirTranslator:
         return res_type, is_output, sig_part
 
     def _process_scalar_argument(self, a_type: str, clean_name: str, name_no_prefix: str) -> Tuple[str, bool, str]:
-        # Thread ID checks
+        # thread ID checks
         if name_no_prefix in ["id", "gid", "global_id", "tid", "lid", "local_id"]:
             self.var_addrspaces[clean_name] = 0
             return a_type, False, f"{a_type} {clean_name}"
 
-        # Regular scalar -> Constant Buffer conversion
+        # regular scalar -> Constant Buffer conversion
         base_type = a_type.strip()
         ptr_type = f"{base_type} addrspace(2)*"
         _, size, align = get_type_info(base_type)
@@ -190,43 +175,82 @@ class AirTranslator:
         self.var_addrspaces[clean_name] = 2
         sig_part = f'{ptr_type} nocapture noundef readonly align {align} dereferenceable({size}) "air-buffer-no-alias" {clean_name}'
 
-        # Setup load map
+        # setup load map
         self.scalar_loads[clean_name] = f"%{name_no_prefix}.loaded"
         return ptr_type, False, sig_part
 
+    #
+    # skip comments
+    #
+
+    def _skip_comments_and_empty(self, idx: int) -> int:
+        while idx < len(self.lines):
+            stripped = self.lines[idx].strip()
+            if not stripped or stripped.startswith(";"):
+                self.output_lines.append(self.lines[idx])
+                idx += 1
+                continue
+            break
+        return idx
+
+    #
+    # insert scalar loads
+    #
+
     def _insert_scalar_loads(self, args_list: List[Tuple[str, str, bool]]):
         for param_name, loaded_var in self.scalar_loads.items():
-            # Find base type from args_list for the load instruction
+            # find base type from args_list for the load instruction
             name_check = param_name.replace("%", "")
             base_type = next((arg.split("addrspace")[0].strip() for arg, name, _ in args_list if name == name_check), None)
 
             if base_type:
                 self.output_lines.append(f"  {loaded_var} = load {base_type}, {base_type} addrspace(2)* {param_name}, align 4")
 
+    #
+    # convert body
+    #
+
+    def _convert_body(self, idx: int) -> int:
+        while idx < len(self.lines):
+            line = self.lines[idx]
+            stripped = line.strip()
+
+            if stripped == "}":
+                self.output_lines.append("}")
+                return idx + 1
+
+            if stripped.startswith(";") or stripped.endswith(":"):
+                self.output_lines.append(line)
+            else:
+                self.output_lines.append(self._convert_instruction(line))
+
+            idx += 1
+        return idx
+
     def _convert_instruction(self, line: str) -> str:
-        # 1. Handle Barrier
+        # 1. handle barrier
         if "call" in line and "barrier" in line:
             return "  tail call void @air.wg.barrier(i32 2, i32 1) #2"
 
-        # 2. Handle Type Casts
+        # 2. handle type casts
         line = self._handle_type_casts(line)
 
-        # 3. Handle Intrinsics
+        # 3. handle intrinsics
         line = self._replace_intrinsics(line)
 
-        # 4. Rewrite Pointers
+        # 4. rewrite pointers
         line = self._rewrite_pointers(line)
 
-        # 5. Propagate Address Spaces
+        # 5. propagate address spaces
         self._propagate_address_spaces(line)
 
-        # 6. Replace Scalar Loads
+        # 6. replace scalar loads
         line = self._apply_scalar_loads(line)
 
         return line
 
     def _handle_type_casts(self, line: str) -> str:
-        # Define conversion patterns
+        # define conversion patterns
         conversions = [
             (r"(%\S+)\s*=\s*uitofp\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.f.{dst}.u.{src}"),
             (r"(%\S+)\s*=\s*sitofp\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.f.{dst}.s.{src}"),
@@ -244,7 +268,7 @@ class AirTranslator:
 
                 self.used_intrinsics.add(intr)
 
-                # Determine call attributes
+                # determine call attributes
                 call_attrs = "tail call fast" if "uitofp" in pattern or "sitofp" in pattern else "tail call"
                 return f"  {res} = {call_attrs} {dst_t} {intr}({src_t} {src_v})"
 
@@ -262,7 +286,7 @@ class AirTranslator:
                 line = line.replace(llvm_intr, air_intr)
                 self.used_intrinsics.add(air_intr)
 
-        # Special mappings
+        # special mappings
         replacements = {"@llvm.minnum.f32": "@air.fmin.f32", "@llvm.maxnum.f32": "@air.fmax.f32"}
         for old, new in replacements.items():
             if old in line:
@@ -296,19 +320,23 @@ class AirTranslator:
 
     def _apply_scalar_loads(self, line: str) -> str:
         for param_name, loaded_var in self.scalar_loads.items():
-            # Use word boundaries to avoid partial replacements
+            # use word boundaries to avoid partial replacements
             param_pattern = re.escape(param_name) + r"\b"
             line = re.sub(param_pattern, loaded_var, line)
         return line
 
+    #
+    # emit metadata
+    #
+
     def _emit_metadata(self):
         self.output_lines.append("\ndeclare void @air.wg.barrier(i32, i32) local_unnamed_addr #1")
 
-        # Intrinsics Declarations
+        # intrinsics Declarations
         for intr in sorted(self.used_intrinsics):
             self._emit_intrinsic_decl(intr)
 
-        # Attributes
+        # attributes
         self.output_lines.append('attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn "approx-func-fp-math"="true" "frame-pointer"="all" "min-legal-vector-width"="0" "no-builtins" "no-infs-fp-math"="true" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "unsafe-fp-math"="true" }')
         self.output_lines.append("attributes #1 = { convergent mustprogress nounwind willreturn }")
         self.output_lines.append("attributes #2 = { convergent nounwind willreturn }")
@@ -317,7 +345,7 @@ class AirTranslator:
             self.output_lines.extend(self._generate_kernel_metadata())
 
     def _emit_intrinsic_decl(self, intr: str):
-        # Convert Handling
+        # convert handling
         if "air.convert" in intr:
             parts = intr.replace("@air.convert.", "").split(".")
 
@@ -326,14 +354,14 @@ class AirTranslator:
             def map_type(t):
                 return AIR_TO_LLVM_TYPES.get(t, t)
 
-            # Index 1 is dest type, Index 3 is src type
+            # index 1 is dest type, Index 3 is src type
             ret_type = map_type(parts[1])
             arg_type = map_type(parts[3])
 
             self.output_lines.append(f"declare {ret_type} {intr}({arg_type}) #2")
             return
 
-        # Math Handling
+        # math handling
         arg_types = "(float)"
         if any(x in intr for x in ["pow", "fmin", "fmax"]):
             arg_types = "(float, float)"
@@ -376,13 +404,13 @@ class AirTranslator:
 
             empty = m("!{}")
 
-            # Signature types for metadata
+            # signature types for metadata
             meta_sig_parts = [arg_type if "addrspace(2)*" not in arg_type else arg_type for arg_type, _, _ in args_list]
             sig_str = f"void ({', '.join(meta_sig_parts)})*"
 
             kernel_nodes.append(m(f"!{{{sig_str} @{func_name}, {empty}, !{{{', '.join(arg_meta_refs)}}}}}"))
 
-        # Standard descriptors
+        # standard descriptors
         descriptors = [
             '!"air.compile.denorms_disable"',
             '!"air.compile.fast_math_enable"',
@@ -398,19 +426,19 @@ class AirTranslator:
         metal_ver = m(f'!{{!"Metal", i32 3, i32 2, i32 0}}')
         src_file = m(f'!{{!"input.ll"}}')
 
-        # Top Level
+        # top level
         top_meta = [f"!air.kernel = !{{{', '.join(kernel_nodes)}}}", f"!air.compile_options = !{{{', '.join(desc_refs[:3])}}}", f"!llvm.ident = !{{{desc_refs[3]}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{metal_ver}}}", f"!air.source_file_name = !{{{src_file}}}", ""]
 
         return top_meta + lines
 
     def _get_air_metadata_content(self, arg_type: str, arg_name: str, is_output: bool) -> Tuple[str, int]:
-        # ID / Grid Position
+        # id / grid position
         if arg_name in ["id", "gid", "global_id"]:
             return ('!"air.thread_position_in_grid", !"air.arg_type_name", !"uint"', 0)
         if arg_name in ["tid", "lid", "local_id"]:
             return ('!"air.thread_position_in_threadgroup", !"air.arg_type_name", !"uint"', 0)
 
-        # Buffers
+        # buffers
         if "addrspace" in arg_type or "*" in arg_type:
             base_t_str = re.sub(r"addrspace\(\d+\)", "", arg_type.replace("*", "")).strip()
             base_name, size, align = get_type_info(base_t_str)
@@ -426,7 +454,7 @@ class AirTranslator:
 
             return (", ".join(meta_parts), as_id)
 
-        # Default Scalar
+        # default scalar
         return (f'!"air.arg_type_name", !"{arg_type.strip()}"', 0)
 
 
