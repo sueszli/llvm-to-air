@@ -31,11 +31,7 @@ def binary_multiple():
 
 def test_multiple_kernels(binary_multiple):
     input_data = [1.0, 2.0, 3.0]
-
-    # Test first kernel
     res_add = run_kernel_1d_float(binary_multiple, input_data, "kernel_add")
     assert res_add == pytest.approx([2.0, 3.0, 4.0])
-
-    # Test second kernel
     res_sub = run_kernel_1d_float(binary_multiple, input_data, "kernel_sub")
     assert res_sub == pytest.approx([0.0, 1.0, 2.0])
