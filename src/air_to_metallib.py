@@ -1,6 +1,7 @@
 import os
 import subprocess
 import tempfile
+from os import system
 from pathlib import Path
 from typing import Callable
 
@@ -13,6 +14,8 @@ import Metal
 
 
 def compile_to_metallib(air_llvm_ir: str) -> bytes:
+    assert system("xcrun --version") == 0, "xcrun not found"
+
     assert air_llvm_ir
     with tempfile.NamedTemporaryFile(suffix=".ll") as f_ll, tempfile.NamedTemporaryFile(suffix=".air") as f_air, tempfile.NamedTemporaryFile(suffix=".metallib") as f_lib:
         f_ll.write(air_llvm_ir.encode("utf-8"))
