@@ -1,9 +1,8 @@
 import pytest
 from utils import compile_to_metallib, run_kernel
 
+# local swap adjacent elements with shared memory
 LLVM_IR = """
-target triple = "unknown-unknown-unknown"
-
 declare void @"barrier"()
 
 define void @"test_kernel"(float* %"in_ptr", float* %"out_ptr", i32 %"global_id", i32 %"local_id", float* %"shared_ptr")
@@ -40,7 +39,7 @@ def test_basic_swap(binary):
 
 
 def test_larger_array(binary):
-    input_data = [float(i) for i in range(8)]  # 0..7
+    input_data = [float(i) for i in range(8)]
     # 0<->1, 2<->3, 4<->5, 6<->7
     # 0->1, 1->0, 2->3, 3->2, etc.
     expected = [1.0, 0.0, 3.0, 2.0, 5.0, 4.0, 7.0, 6.0]
