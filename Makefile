@@ -1,3 +1,7 @@
+.PHONY: test
+test:
+	PYTHONPATH=. uv run --with pytest --with pyobjc-framework-Metal --with pyobjc-framework-Cocoa pytest test/test_kernel.py
+
 .PHONY: venv
 venv:
 	test -f requirements.txt || (uvx pipreqs . --mode no-pin --encoding utf-8 --ignore .venv && mv requirements.txt requirements.in && uv pip compile requirements.in -o requirements.txt)
