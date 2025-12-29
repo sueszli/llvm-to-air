@@ -175,6 +175,7 @@ VALID_OPCODES: Set[str] = {
     # Arithmetic
     "fadd",
     "fsub",
+    "fneg",
     "fmul",
     "fdiv",
     "frem",
@@ -272,13 +273,12 @@ def _replace_intrinsics(line: str) -> Tuple[str, Set[str]]:
     return line, used_intr
 
 
-def _generate_metadata(func_name: str, args_list: List[Tuple[str, str, bool]]) -> List[str]:
+def _generate_metadata(kernels: List[Tuple[str, List[Tuple[str, str, bool]]]]) -> List[str]:
     """
-    Generates Metal AIR metadata for a kernel function.
+    Generates Metal AIR metadata for a list of kernel functions.
 
     Args:
-        func_name: Name of the kernel function
-        args_list: List of (type, name, is_output) tuples for function arguments
+        kernels: List of (func_name, args_list) tuples
 
     Returns:
         List of metadata lines to append to output
@@ -292,45 +292,46 @@ def _generate_metadata(func_name: str, args_list: List[Tuple[str, str, bool]]) -
         meta_id += 1
         return f"!{meta_id-1}"
 
-    arg_meta_refs = []
-    global_buffer_idx = 0  # For addrspace(1) and addrspace(2) - they share location indices
-    threadgroup_buffer_idx = 0  # For addrspace(3) - separate location indices
+    kernel_nodes = []
 
-    for idx, (at, an, is_out) in enumerate(args_list):
-        template, as_id = _get_air_metadata_content(at, an, is_out)
-        content = template
-        if "{loc_index}" in template:
-            # Address space 1 (global) and 2 (constant) share the same location index counter
-            # Address space 3 (threadgroup) has its own counter
-            if as_id == 3:
-                buf_idx = threadgroup_buffer_idx
-                threadgroup_buffer_idx += 1
-            else:  # as_id == 1 or as_id == 2
-                buf_idx = global_buffer_idx
-                global_buffer_idx += 1
-            content = content.replace("{loc_index}", str(buf_idx))
+    for func_name, args_list in kernels:
+        arg_meta_refs = []
+        global_buffer_idx = 0  # For addrspace(1) and addrspace(2) - they share location indices
+        threadgroup_buffer_idx = 0  # For addrspace(3) - separate location indices
 
-        if "air.arg_name" not in content:
-            content += f', !"air.arg_name", !"{an}"'
+        for idx, (at, an, is_out) in enumerate(args_list):
+            template, as_id = _get_air_metadata_content(at, an, is_out)
+            content = template
+            if "{loc_index}" in template:
+                # Address space 1 (global) and 2 (constant) share the same location index counter
+                # Address space 3 (threadgroup) has its own counter
+                if as_id == 3:
+                    buf_idx = threadgroup_buffer_idx
+                    threadgroup_buffer_idx += 1
+                else:  # as_id == 1 or as_id == 2
+                    buf_idx = global_buffer_idx
+                    global_buffer_idx += 1
+                content = content.replace("{loc_index}", str(buf_idx))
 
-        arg_meta_refs.append(m(f"!{{i32 {idx}, {content}}}"))
+            if "air.arg_name" not in content:
+                content += f', !"air.arg_name", !"{an}"'
 
-    empty = m("!{}")
-    # Build the metadata signature using the TRANSFORMED types from args_list
-    # For constant buffer scalars, we need to use the pointer type
-    meta_sig_parts = []
-    for arg_type, arg_name, _ in args_list:
-        # If this was a scalar that got converted to a constant buffer pointer,
-        # use the pointer type in the metadata signature
-        if "addrspace(2)*" in arg_type:
-            meta_sig_parts.append(arg_type)
-        else:
-            meta_sig_parts.append(arg_type)
+            arg_meta_refs.append(m(f"!{{i32 {idx}, {content}}}"))
 
-    sig_str = f"void ({', '.join(meta_sig_parts)})*"
-    lines.append(f"!{meta_id} = !{{{sig_str} @{func_name}, {empty}, !{{{', '.join(arg_meta_refs)}}}}}")
-    kernel_node = f"!{meta_id}"
-    meta_id += 1
+        empty = m("!{}")
+        # Build the metadata signature using the TRANSFORMED types from args_list
+        # For constant buffer scalars, we need to use the pointer type
+        meta_sig_parts = []
+        for arg_type, arg_name, _ in args_list:
+            # If this was a scalar that got converted to a constant buffer pointer,
+            # use the pointer type in the metadata signature
+            if "addrspace(2)*" in arg_type:
+                meta_sig_parts.append(arg_type)
+            else:
+                meta_sig_parts.append(arg_type)
+
+        sig_str = f"void ({', '.join(meta_sig_parts)})*"
+        kernel_nodes.append(m(f"!{{{sig_str} @{func_name}, {empty}, !{{{', '.join(arg_meta_refs)}}}}}"))
 
     # Standard AIR metadata
     lines.append(f'!{meta_id} = !{{!"air.compile.denorms_disable"}}')
@@ -357,7 +358,7 @@ def _generate_metadata(func_name: str, args_list: List[Tuple[str, str, bool]]) -
 
     # Top-level metadata references
     result = [
-        f"!air.kernel = !{{{kernel_node}}}",
+        f"!air.kernel = !{{{', '.join(kernel_nodes)}}}",
         f"!air.compile_options = !{{{denorms}, {fastmath}, {fb}}}",
         f"!llvm.ident = !{{{ident}}}",
         f"!air.version = !{{{version}}}",
@@ -428,7 +429,7 @@ def to_air(llvm_ir_text: str) -> str:
     lines = llvm_ir_text.splitlines()
     i = 0
     in_function = False
-    func_name = ""
+    all_kernels = []
     args_list: List[Tuple[str, str, bool]] = []
     var_addrspaces: Dict[str, int] = {}
     scalar_loads: Dict[str, str] = {}
@@ -441,6 +442,7 @@ def to_air(llvm_ir_text: str) -> str:
 
         if stripped.startswith("define void"):
             func_name, args_list, var_addrspaces, scalar_loads, air_sig, next_i = _parse_signature(lines, i)
+            all_kernels.append((func_name, args_list))
             output_lines.append(air_sig)
             i = next_i
             in_function = True
@@ -535,7 +537,7 @@ def to_air(llvm_ir_text: str) -> str:
     output_lines.append("attributes #1 = { convergent mustprogress nounwind willreturn }")
     output_lines.append("attributes #2 = { convergent nounwind willreturn }")
 
-    if func_name:
-        output_lines.extend(_generate_metadata(func_name, args_list))
+    if all_kernels:
+        output_lines.extend(_generate_metadata(all_kernels))
 
     return "\n".join(output_lines)
