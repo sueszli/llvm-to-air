@@ -189,7 +189,7 @@ def to_air(llvm_ir_text: str) -> str:
 
     # Metadata Footer
     output_lines.append("\ndeclare void @air.wg.barrier(i32, i32) local_unnamed_addr #1")
-    output_lines.append('attributes #0 = { argmemonly mustprogress nofree norecurse nosync nounwind willreturn "frame-pointer"="all" "min-legal-vector-width"="0" "no-builtins" "no-trapping-math"="true" "stack-protector-buffer-size"="8" }')
+    output_lines.append('attributes #0 = { argmemonly mustprogress nofree norecurse nosync nounwind willreturn "approx-func-fp-math"="true" "frame-pointer"="all" "min-legal-vector-width"="0" "no-builtins" "no-infs-fp-math"="true" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "unsafe-fp-math"="true" }')
     output_lines.append("attributes #1 = { convergent mustprogress nounwind willreturn }")
     output_lines.append("attributes #2 = { convergent nounwind willreturn }")
 
@@ -256,7 +256,7 @@ def to_air(llvm_ir_text: str) -> str:
         src = f"!{meta_id}"
         meta_id += 1
 
-        output_lines.extend([f"!air.kernel = !{{{kernel_node}}}", f"!air.compile_options = !{{{denorms}, {fb}}}", f"!llvm.ident = !{{{ident}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{lang}}}", f"!air.source_file_name = !{{{src}}}", ""])
+        output_lines.extend([f"!air.kernel = !{{{kernel_node}}}", f"!air.compile_options = !{{{denorms}, {fastmath}, {fb}}}", f"!llvm.ident = !{{{ident}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{lang}}}", f"!air.source_file_name = !{{{src}}}", ""])
         output_lines.extend(lines)
 
     return "\n".join(output_lines)

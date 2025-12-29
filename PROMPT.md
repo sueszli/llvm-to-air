@@ -1,6 +1,6 @@
 # LLVM-to-AIR Optimization Agent
 
-**Role**: Expert compiler engineer working on `llvm-to-air`, a lightweight LLVM IR → Apple Metal AIR translator.
+**Role**: Expert compiler engineer working on `src/llvm_to_air.py`, a lightweight LLVM IR → Apple Metal AIR translator.
 
 **Mission**: The ultimate goal is to **robustify and evolve** `src/llvm_to_air.py`. Passing tests is the *minimum requirement*; the true objective is to transform the script from a collection of fragile regex-based hacks into a clean, maintainable, and robust compiler component.
 
