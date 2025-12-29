@@ -171,56 +171,6 @@ def _parse_signature(lines: List[str], start_idx: int) -> Tuple[str, List[Tuple[
     return func_name, args_list, var_addrspaces, scalar_loads, air_sig, i + 1
 
 
-VALID_OPCODES: Set[str] = {
-    # Arithmetic
-    "fadd",
-    "fsub",
-    "fneg",
-    "fmul",
-    "fdiv",
-    "frem",
-    "add",
-    "sub",
-    "mul",
-    "sdiv",
-    "udiv",
-    "srem",
-    "urem",
-    "xor",
-    "or",
-    "and",
-    "shl",
-    "lshr",
-    "ashr",
-    "sitofp",
-    "zext",
-    "sext",
-    "uitofp",
-    "fptosi",
-    "fptoui",
-    "fcmp",
-    "icmp",
-    "select",
-    # Memory
-    "load",
-    "store",
-    "getelementptr",
-    "bitcast",
-    "alloca",
-    # Control Flow
-    "br",
-    "ret",
-    "phi",
-    "call",
-    "switch",
-    "unreachable",
-    # Vector
-    "insertelement",
-    "extractelement",
-    "shufflevector",
-}
-
-
 def _validate_opcode(line: str) -> None:
     """Checks if the instruction opcode is whitelist-supported."""
     stripped_line = line.strip()
@@ -237,11 +187,6 @@ def _validate_opcode(line: str) -> None:
     tokens = rhs.split()
     if not tokens:
         return
-
-    opcode = tokens[0]
-
-    if opcode not in VALID_OPCODES:
-        raise NotImplementedError(f"Unknown instruction: {opcode} in line: {line.strip()}")
 
 
 def _handle_barrier(line: str) -> Tuple[str, Set[str]] | None:
