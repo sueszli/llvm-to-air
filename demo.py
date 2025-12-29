@@ -222,6 +222,7 @@ class IRGen:
         return struct_val
 
     def _print_tensor(self, val):
+        # extract pointer, rows, and cols from struct
         ptr = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [0]), val, llvm.LLVMPointerType())).results[0]
         rows = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [1]), val, i32)).results[0]
         cols = self.builder.insert(llvm.ExtractValueOp(DenseArrayBase.from_list(i64, [2]), val, i32)).results[0]
@@ -273,22 +274,27 @@ class IRGen:
         if builder is None:
             builder = self.builder
         if val not in self.str_cache:
+            # create unique name for string global
             global_name = f".str.{self.str_cnt}"
             self.str_cnt += 1
             self.str_cache[val] = global_name
+            # create null-terminated string data
             string_data = val.encode("utf-8") + b"\0"
             array_type = llvm.LLVMArrayType.from_size_and_type(len(string_data), builtin.i8)
             array_value = ArrayAttr([IntegerAttr(byte, builtin.i8) for byte in string_data])
 
+            # create global string constant
             global_op = llvm.GlobalOp(
                 array_type,
                 StringAttr(global_name),
                 linkage=llvm.LinkageAttr("internal"),
                 constant=True,
-                value=array_value,
+                value=array_value
             )
+            # insert global at beginning of module
             self.module.body.blocks[0].insert_op_before(global_op, self.module.body.blocks[0].first_op)
 
+        # return pointer to global string
         global_name = self.str_cache[val]
         return builder.insert(llvm.AddressOfOp(global_name, llvm.LLVMPointerType())).results[0]
 
