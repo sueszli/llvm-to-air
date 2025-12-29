@@ -5,7 +5,7 @@ from typing import Dict, List, Set, Tuple
 from .utils import AIR_TO_LLVM_TYPES, LLVM_TO_AIR_TYPES, get_type_info
 
 
-class AirConverter:
+class AirTranslator:
     def __init__(self, llvm_ir: str):
         self.lines = llvm_ir.splitlines()
         self.output_lines: List[str] = []
@@ -16,7 +16,7 @@ class AirConverter:
         self.scalar_loads: Dict[str, str] = {}
         self.used_intrinsics: Set[str] = set()
 
-    def convert(self) -> str:
+    def translate(self) -> str:
         # main entry point for conversion
         self._write_header()
 
@@ -410,5 +410,5 @@ class AirConverter:
 
 
 def to_air(llvm_ir_text: str) -> str:
-    converter = AirConverter(llvm_ir_text)
-    return converter.convert()
+    translator = AirTranslator(llvm_ir_text)
+    return translator.translate()
