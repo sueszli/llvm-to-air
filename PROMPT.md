@@ -54,4 +54,25 @@ kernel void add(device const float* a [[buffer(0)]],
 
 Corresponding LLVM IR test structure:
 ```python
+LLVM_IR_ADD = """
+define void @add_kernel(float* %a, float* %b, i32 %id) {
+  %idx = zext i32 %id to i64
+  %ptr_in = getelementptr inbounds float, float* %a, i64 %idx
+  %val = load float, float* %ptr_in
+  %res = fadd float %val, 1.0
+  %ptr_out = getelementptr inbounds float, float* %b, i64 %idx
+  store float %res, float* %ptr_out
+  ret void
+}
+"""
+
+@pytest.fixture(scope="module")
+def binary_add():
+    return compile_to_metallib(LLVM_IR_ADD)
+
+def test_add(binary_add):
+    input_data = [0.0, 1.0, 2.0]
+    expected = [1.0, 2.0, 3.0]
+    result = run_kernel_1d_float(binary_add, input_data, "add_kernel")
+    assert result == pytest.approx(expected)
 ```
