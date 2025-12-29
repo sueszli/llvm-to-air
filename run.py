@@ -3,9 +3,8 @@
 # ///
 import ctypes
 import os
-import tempfile
-import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import Foundation
@@ -272,9 +271,7 @@ if __name__ == "__main__":
     src_llvm_text = generate_llvm()
 
     air_llvm_text = to_air(src_llvm_text)
-    with tempfile.NamedTemporaryFile(suffix=".ll") as f_ll, \
-         tempfile.NamedTemporaryFile(suffix=".air") as f_air, \
-         tempfile.NamedTemporaryFile(suffix=".metallib") as f_lib:
+    with tempfile.NamedTemporaryFile(suffix=".ll") as f_ll, tempfile.NamedTemporaryFile(suffix=".air") as f_air, tempfile.NamedTemporaryFile(suffix=".metallib") as f_lib:
 
         f_ll.write(air_llvm_text.encode("utf-8"))
         f_ll.flush()
