@@ -1,9 +1,10 @@
 TODO:
 
-write a bunch of test python scripts
-make them all call an external llvm_to_air.py script
+
+create a bunch of test cases and improve llvm_to_air.py along the way
 
 
+idea:
 my own gpu language (xdsl module) -> llvm ir (xdsl lowering) -> air (the llvm_to_air.py script) -> metallib
 
 https://forum.modular.com/t/apple-silicon-gpu-support-in-mojo/2295

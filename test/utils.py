@@ -89,16 +89,11 @@ def _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args_fn: Ca
     assert status == Metal.MTLCommandBufferStatusCompleted, f"command buffer failed with status {status} and error: {cmd_buffer.error()}"
 
 
-def run_kernel(metallib_binary: bytes, input_data: list[float], kernel_name: str) -> list[float]:
-    assert len(metallib_binary) > 0, "metallib binary is empty"
-    assert len(input_data) > 0, "input data cannot be empty"
-    assert kernel_name, "kernel name cannot be empty"
-
+def _run_kernel_common_1d(metallib_binary: bytes, input_data: list, kernel_name: str, c_type, width: int, height: int, threadgroup_w: int, threadgroup_h: int, use_shared_mem: bool) -> list:
     device, pso = _create_compute_pipeline(metallib_binary, kernel_name)
 
-    # prepare data and compute buffers
     thread_count_items = len(input_data)
-    raw_data_array = (ctypes.c_float * thread_count_items)(*input_data)
+    raw_data_array = (c_type * thread_count_items)(*input_data)
     data_size_bytes = ctypes.sizeof(raw_data_array)
 
     buffer_in = device.newBufferWithBytes_length_options_(raw_data_array, data_size_bytes, Metal.MTLResourceStorageModeShared)
@@ -110,16 +105,40 @@ def run_kernel(metallib_binary: bytes, input_data: list[float], kernel_name: str
     def encode_args(encoder):
         encoder.setBuffer_offset_atIndex_(buffer_in, 0, 0)
         encoder.setBuffer_offset_atIndex_(buffer_out, 0, 1)
-        encoder.setThreadgroupMemoryLength_atIndex_(data_size_bytes, 0)
+        if use_shared_mem:
+            encoder.setThreadgroupMemoryLength_atIndex_(data_size_bytes, 0)
 
-    grid_size = Metal.MTLSize(width=thread_count_items, height=1, depth=1)
-    threadgroup_size = Metal.MTLSize(width=thread_count_items, height=1, depth=1)
+    grid_size = Metal.MTLSize(width=width, height=height, depth=1)
+    threadgroup_size = Metal.MTLSize(width=threadgroup_w, height=threadgroup_h, depth=1)
 
     _execute_kernel(device, pso, grid_size, threadgroup_size, encode_args)
 
-    # extract results from output buffer
     output_ptr = buffer_out.contents()
     output_buffer = output_ptr.as_buffer(data_size_bytes)
-    results_view = memoryview(output_buffer).cast("f")
 
+    if c_type == ctypes.c_float:
+        fmt = "f"
+    elif c_type == ctypes.c_int32:
+        fmt = "i"
+    elif c_type == ctypes.c_uint32:
+        fmt = "I"
+    else:
+        assert False, f"unsupported c_type: {c_type}"
+
+    results_view = memoryview(output_buffer).cast(fmt)
     return list(results_view)
+
+
+def run_kernel_1d_float(metallib_binary: bytes, input_data: list[float], kernel_name: str) -> list[float]:
+    # 1D grid, threadgroup size = grid size, uses shared memory
+    n = len(input_data)
+    return _run_kernel_common_1d(metallib_binary, input_data, kernel_name, ctypes.c_float, n, 1, n, 1, True)
+
+
+def run_kernel_1d_int(metallib_binary: bytes, input_data: list[int], kernel_name: str) -> list[int]:
+    # 1D grid, threadgroup size = grid size, uses shared memory
+    n = len(input_data)
+    return _run_kernel_common_1d(metallib_binary, input_data, kernel_name, ctypes.c_int32, n, 1, n, 1, True)
+
+
+# ... also write run_kernel_2d_float and run_kernel_2d_int, etc.
