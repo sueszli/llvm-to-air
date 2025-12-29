@@ -48,21 +48,9 @@ class IRGen:
 
     def _declare_external_funcs(self):
         # void* malloc(size_t)
-        self.builder.insert(
-            llvm.FuncOp(
-                "malloc",
-                llvm.LLVMFunctionType([i64], llvm.LLVMPointerType()),
-                linkage=llvm.LinkageAttr("external"),
-            )
-        )
+        self.builder.insert(llvm.FuncOp("malloc", llvm.LLVMFunctionType([i64], llvm.LLVMPointerType()), linkage=llvm.LinkageAttr("external")))
         # int printf(char*, ...)
-        self.builder.insert(
-            llvm.FuncOp(
-                "printf",
-                llvm.LLVMFunctionType([llvm.LLVMPointerType()], i32, is_variadic=True),
-                linkage=llvm.LinkageAttr("external"),
-            )
-        )
+        self.builder.insert(llvm.FuncOp("printf", llvm.LLVMFunctionType([llvm.LLVMPointerType()], i32, is_variadic=True), linkage=llvm.LinkageAttr("external")))
 
     def gen(self, tree: Lark) -> ModuleOp:
         # Create main function
