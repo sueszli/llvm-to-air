@@ -1,6 +1,7 @@
 import math
 
 import pytest
+
 from utils import llvm_to_metallib, run_kernel_1d_float
 
 # relu: out[i] = max(0.0, in[i])

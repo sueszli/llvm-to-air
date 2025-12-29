@@ -9,9 +9,8 @@ import pytest
 root_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root_dir))
 
-from utils import llvm_to_metallib
-
 from src.air_to_metallib import create_compute_pipeline, execute_kernel
+from utils import llvm_to_metallib
 
 # logistic regression forward pass: y = sigmoid(w * x + b)
 # sigmoid(z) = 1 / (1 + exp(-z))

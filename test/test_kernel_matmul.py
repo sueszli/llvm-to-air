@@ -10,10 +10,11 @@ from xdsl.dialects import func
 from xdsl.dialects.builtin import FunctionType, ModuleOp
 
 from src import kernel_matmul
+from src.utils import fix_mlir
 
 
 class TestKernelMatmul(unittest.TestCase):
-    def test_fix_mlir(self):
+    def testfix_mlir(self):
         mlir_input = """
 module {
   func.func @matmul(%0 : !llvm.ptr, %1 : !llvm.ptr, %2 : !llvm.ptr, %3 : i32, %4 : i32, %5 : i32, %6 : i32) {
@@ -26,14 +27,14 @@ module {
     
       %7 = arith.extui %6 : i32 to i64
 """
-        fixed = kernel_matmul._fix_mlir(mlir_input)
+        fixed = fix_mlir(mlir_input)
         self.assertNotIn("^bb0", fixed)
         self.assertIn("%7 = arith.extui %6 : i32 to i64", fixed)
         self.assertEqual(fixed, expected_output)
 
     def test_fix_mlir_no_match(self):
         mlir_input = "module { }"
-        fixed = kernel_matmul._fix_mlir(mlir_input)
+        fixed = fix_mlir(mlir_input)
         self.assertEqual(fixed, mlir_input)
 
     def test_gen_kernel_matmul(self):
