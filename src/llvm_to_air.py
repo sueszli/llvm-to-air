@@ -557,5 +557,7 @@ def to_air(llvm_ir_text: str, kernel_overrides: Dict[str, Dict[str, str]] = None
     """
     assert llvm_ir_text
     assert sys.platform == "darwin"
+    assert platform.machine() == "arm64"
+
     translator = AirTranslator(llvm_ir_text, kernel_overrides)
     return translator.translate()
