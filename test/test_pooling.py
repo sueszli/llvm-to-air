@@ -226,3 +226,61 @@ def test_avgpool2d_uniform(binary_avgpool2d):
 
     result = run_kernel_1d_float(binary_avgpool2d, input_data, "avgpool2d")
     assert result[:4] == pytest.approx(expected)
+
+
+LLVM_IR_MINPOOL2D = """
+declare float @llvm.minnum.f32(float, float)
+
+define void @minpool2d(float* %input, float* %output, i32 %global_id) {
+entry:
+  %idx = zext i32 %global_id to i64
+  %out_row_32 = udiv i32 %global_id, 2
+  %out_col_32 = urem i32 %global_id, 2
+  %out_row = zext i32 %out_row_32 to i64
+  %out_col = zext i32 %out_col_32 to i64
+  %in_row_start = mul i64 %out_row, 2
+  %in_col_start = mul i64 %out_col, 2
+  %in_row_0 = add i64 %in_row_start, 0
+  %in_col_0 = add i64 %in_col_start, 0
+  %in_idx_00 = mul i64 %in_row_0, 4
+  %in_idx_00_x = add i64 %in_idx_00, %in_col_0
+  %in_ptr_00 = getelementptr inbounds float, float* %input, i64 %in_idx_00_x
+  %val_00 = load float, float* %in_ptr_00
+  %in_row_1 = add i64 %in_row_start, 0
+  %in_col_1 = add i64 %in_col_start, 1
+  %in_idx_01 = mul i64 %in_row_1, 4
+  %in_idx_01_x = add i64 %in_idx_01, %in_col_1
+  %in_ptr_01 = getelementptr inbounds float, float* %input, i64 %in_idx_01_x
+  %val_01 = load float, float* %in_ptr_01
+  %in_row_2 = add i64 %in_row_start, 1
+  %in_col_2 = add i64 %in_col_start, 0
+  %in_idx_10 = mul i64 %in_row_2, 4
+  %in_idx_10_x = add i64 %in_idx_10, %in_col_2
+  %in_ptr_10 = getelementptr inbounds float, float* %input, i64 %in_idx_10_x
+  %val_10 = load float, float* %in_ptr_10
+  %in_row_3 = add i64 %in_row_start, 1
+  %in_col_3 = add i64 %in_col_start, 1
+  %in_idx_11 = mul i64 %in_row_3, 4
+  %in_idx_11_x = add i64 %in_idx_11, %in_col_3
+  %in_ptr_11 = getelementptr inbounds float, float* %input, i64 %in_idx_11_x
+  %val_11 = load float, float* %in_ptr_11
+  %min_01 = call float @llvm.minnum.f32(float %val_00, float %val_01)
+  %min_23 = call float @llvm.minnum.f32(float %val_10, float %val_11)
+  %min_final = call float @llvm.minnum.f32(float %min_01, float %min_23)
+  %out_ptr = getelementptr inbounds float, float* %output, i64 %idx
+  store float %min_final, float* %out_ptr
+  ret void
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def binary_minpool2d():
+    return compile_to_metallib(LLVM_IR_MINPOOL2D)
+
+
+def test_minpool2d(binary_minpool2d):
+    input_data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0]
+    expected = [1.0, 3.0, 9.0, 11.0]
+    result = run_kernel_1d_float(binary_minpool2d, input_data, "minpool2d")
+    assert result[:4] == pytest.approx(expected)

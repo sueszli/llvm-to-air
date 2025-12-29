@@ -161,3 +161,56 @@ def test_div_exp(binary_tensor_ops):
     expected = [math.exp(x) / 2.0 for x in input_data]
     result = run_kernel_1d_float(binary_tensor_ops, input_data, "tensor_ops")
     assert result == pytest.approx(expected)
+
+
+LLVM_IR_FREM = """
+define void @frem_kernel(float* %a, float* %b, i32 %id) {
+  %idx = zext i32 %id to i64
+  %ptr_in = getelementptr inbounds float, float* %a, i64 %idx
+  %val = load float, float* %ptr_in
+  %res = frem float %val, 2.0
+  %ptr_out = getelementptr inbounds float, float* %b, i64 %idx
+  store float %res, float* %ptr_out
+  ret void
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def binary_frem():
+    return compile_to_metallib(LLVM_IR_FREM)
+
+
+def test_frem(binary_frem):
+    input_data = [2.5, 4.0, 5.1, 0.5]
+    expected = [0.5, 0.0, 1.1, 0.5]
+    result = run_kernel_1d_float(binary_frem, input_data, "frem_kernel")
+    assert result == pytest.approx(expected, abs=1e-5)
+
+
+LLVM_IR_RSQRT = """
+declare float @llvm.sqrt.f32(float)
+
+define void @rsqrt_kernel(float* %a, float* %b, i32 %id) {
+  %idx = zext i32 %id to i64
+  %ptr_in = getelementptr inbounds float, float* %a, i64 %idx
+  %val = load float, float* %ptr_in
+  %sqrt_val = call float @llvm.sqrt.f32(float %val)
+  %res = fdiv float 1.0, %sqrt_val
+  %ptr_out = getelementptr inbounds float, float* %b, i64 %idx
+  store float %res, float* %ptr_out
+  ret void
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def binary_rsqrt():
+    return compile_to_metallib(LLVM_IR_RSQRT)
+
+
+def test_rsqrt(binary_rsqrt):
+    input_data = [1.0, 4.0, 16.0]
+    expected = [1.0, 0.5, 0.25]
+    result = run_kernel_1d_float(binary_rsqrt, input_data, "rsqrt_kernel")
+    assert result == pytest.approx(expected, abs=1e-5)

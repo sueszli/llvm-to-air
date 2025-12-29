@@ -149,3 +149,11 @@ def test_simple_matmul(binary_simple_matmul):
     expected = [20.0, 60.0, 120.0, 200.0, 0.0, 0.0, 0.0, 0.0]
     result = run_kernel_1d_float(binary_simple_matmul, input_data, "simple_matmul")
     assert result[:4] == pytest.approx(expected[:4])
+
+
+def test_matmul_3x3(binary_matmul):
+    A = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+    B = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+    M, N, K = 3, 3, 3
+    result = run_matmul(binary_matmul, A, B, M, N, K)
+    assert result == pytest.approx(A)

@@ -98,3 +98,30 @@ def test_sigmoid(binary_sigmoid):
     expected = [1.0 / (1.0 + math.exp(-x)) for x in input_data]
     result = run_kernel_1d_float(binary_sigmoid, input_data, "sigmoid_kernel")
     assert result == pytest.approx(expected)
+
+
+LLVM_IR_TANH = """
+declare float @llvm.tanh.f32(float)
+
+define void @tanh_kernel(float* %a, float* %b, i32 %id) {
+  %idx = zext i32 %id to i64
+  %ptr_in = getelementptr inbounds float, float* %a, i64 %idx
+  %val = load float, float* %ptr_in
+  %res = call float @llvm.tanh.f32(float %val)
+  %ptr_out = getelementptr inbounds float, float* %b, i64 %idx
+  store float %res, float* %ptr_out
+  ret void
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def binary_tanh():
+    return compile_to_metallib(LLVM_IR_TANH)
+
+
+def test_tanh(binary_tanh):
+    input_data = [-1.0, 0.0, 1.0, 2.0]
+    expected = [math.tanh(x) for x in input_data]
+    result = run_kernel_1d_float(binary_tanh, input_data, "tanh_kernel")
+    assert result == pytest.approx(expected)
