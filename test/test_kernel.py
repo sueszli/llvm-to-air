@@ -2,8 +2,7 @@ import pytest
 from utils import compile_to_metallib, run_kernel
 
 LLVM_IR = """
-target triple = "arm64-apple-darwin24.6.0"
-target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
+target triple = "unknown-unknown-unknown"
 
 declare void @"barrier"()
 
