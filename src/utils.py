@@ -1,4 +1,4 @@
-import os
+import functools
 import platform
 import re
 import shutil
@@ -27,34 +27,19 @@ def get_metal_version() -> str:
     return default_version
 
 
+@functools.lru_cache(maxsize=1)
 def get_target_datalayout() -> str:
-    # datalayout string by querying the metal compiler.
-    default_layout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"
-
-    metal_path = shutil.which("metal")
-    if not metal_path:
-        return default_layout
-
-    with tempfile.TemporaryDirectory() as temp_dir:
-        src_path = os.path.join(temp_dir, "test.metal")
-        out_path = os.path.join(temp_dir, "test.ll")
-
-        with open(src_path, "w") as f:
-            f.write("kernel void empty() {}")
-
-        cmd = ["xcrun", "-sdk", "macosx", "metal", "-S", "-emit-llvm", src_path, "-o", out_path]
-        if not shutil.which("xcrun"):
-            cmd = [metal_path, "-S", "-emit-llvm", src_path, "-o", out_path]
-
-        subprocess.run(cmd, check=True, capture_output=True)
-        if os.path.exists(out_path):
-            with open(out_path, "r") as f:
-                for line in f:
-                    if line.strip().startswith("target datalayout ="):
-                        match = re.search(r'"([^"]+)"', line)
-                        if match:
-                            return match.group(1)
-    return default_layout
+    default = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"
+    if not (metal := shutil.which("metal")):
+        return default
+    with tempfile.TemporaryDirectory() as d:
+        with open(src := f"{d}/t.metal", "w") as f:
+            f.write("kernel void e(){}")
+        cmd = ["xcrun", "-sdk", "macosx", "metal"] if shutil.which("xcrun") else [metal]
+        subprocess.run(cmd + ["-S", "-emit-llvm", src, "-o", out := f"{d}/t.ll"], check=True, capture_output=True)
+        if m := re.search(r'target datalayout = "([^"]+)"', open(out).read()):
+            return m.group(1)
+    return default
 
 
 def fix_mlir(mlir_text):

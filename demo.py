@@ -57,7 +57,7 @@ class Compiler:
         assert K == K_rhs, f"dimension mismatch: {M}x{K} @ {K_rhs}x{N}"
 
         device, pso = create_compute_pipeline(kernel_matmul_binary(), "matmul")
-        print(f"running on metal device: {device.name()}")
+        print(f"matmul on metal device: {device.name()}")
 
         buf_a = self._create_metal_buffer(device, A["data"])
         buf_b = self._create_metal_buffer(device, B["data"])
