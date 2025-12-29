@@ -62,3 +62,34 @@ def test_add(binary_add):
     expected_output = [x + 1.0 for x in input_data]
     result = run_kernel_1d_float(binary_add, input_data, "add_kernel")
     assert result == expected_output
+
+
+#
+# out[i] = in[i] + i
+#
+
+LLVM_IR_ADD_INDEX = """
+define void @add_index(float* %a, float* %b, i32 %id) {
+  %1 = getelementptr inbounds float, float* %a, i32 %id
+  %val = load float, float* %1, align 4
+  %idx_float = sitofp i32 %id to float
+  %res = fadd float %val, %idx_float
+  %2 = getelementptr inbounds float, float* %b, i32 %id
+  store float %res, float* %2, align 4
+  ret void
+}
+"""
+
+
+@pytest.fixture(scope="module")
+def binary_add_index():
+    return compile_to_metallib(LLVM_IR_ADD_INDEX)
+
+
+def test_large_grid_execution(binary_add_index):
+    size = 1024
+    input_data = [1.0] * size
+    output = run_kernel_1d_float(binary_add_index, input_data, "add_index", threadgroup_size=32)
+    for i in range(size):
+        expected = 1.0 + float(i)
+        assert output[i] == expected, f"Mismatch at index {i}: expected {expected}, got {output[i]}"

@@ -1,226 +1,245 @@
 import re
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 
-def _get_air_type_metadata(arg_type: str, arg_name: str) -> str:
-    """Returns the AIR attribute string for a given argument."""
-    # Heuristics for special arguments
+def _get_type_info(type_str: str) -> Tuple[str, int, int]:
+    """Returns (base_name, size, align) for a given LLVM type."""
+    t = type_str.strip()
+    if "<" in t and ">" in t:
+        match = re.search(r"<(\d+)\s+x\s+([\w\d]+)>", t)
+        if match:
+            count = int(match.group(1))
+            elem_type = match.group(2)
+            if elem_type == "float":
+                return ("float", count * 4, count * 4)
+            if elem_type == "i32":
+                return ("int", count * 4, count * 4)
+
+    if "float" in t:
+        return ("float", 4, 4)
+    if "i32" in t:
+        return ("int", 4, 4)
+    if "i8" in t:
+        return ("char", 1, 1)
+
+    return (t, 4, 4)
+
+
+def _get_air_metadata_content(arg_type: str, arg_name: str) -> Tuple[str, int]:
+    """
+    Returns (metadata_content_template, address_space_id)
+    The template contains {loc_index} placeholder.
+    """
+
+    # ID / Grid Position
     if arg_name in ["id", "gid", "global_id"]:
-        return '!"air.thread_position_in_grid", !"air.arg_type_name", !"uint"'
+        return ('!"air.thread_position_in_grid", !"air.arg_type_name", !"uint"', 0)
     if arg_name in ["tid", "lid", "local_id"]:
-        return '!"air.thread_position_in_threadgroup", !"air.arg_type_name", !"uint"'
+        return ('!"air.thread_position_in_threadgroup", !"air.arg_type_name", !"uint"', 0)
 
-    # Heuristics for address spaces/buffers based on type or name
-    # We assume standard float pointers are global buffers (addrspace 1)
-    if "*" in arg_type:
-        # Check for shared memory hint in name
-        if "shared" in arg_name:
-            return '!"air.buffer", !"air.location_index", i32 0, i32 1, !"air.read_write", !"air.address_space", i32 3, !"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"floatBuffer"'
+    # Buffers (pointers)
+    if "addrspace" in arg_type or "*" in arg_type:
+        base_t_str = arg_type.replace("*", "").strip()
+        base_t_str = re.sub(r"addrspace\(\d+\)", "", base_t_str).strip()
 
-        # Default to global buffer
-        # Note: simplistic location index assignment (needs to be unique ideally, but for now 0/1 works if not colliding?
-        # Actually AIR expects unique location indices for buffers.
-        # We will assign them dynamically in the caller, here we just return the template.)
-        return "BUFFER_TEMPLATE"
+        base_name, size, align = _get_type_info(base_t_str)
 
-    # Default value type
-    return f'!"air.arg_type_name", !"{arg_type}"'
+        addr_space_id = 1
+        if "addrspace(3)" in arg_type:
+            addr_space_id = 3
 
+        # We put a placeholder {loc_index}
+        meta = f'!"air.buffer", !"air.location_index", i32 {{loc_index}}, i32 1, !"air.read_write", !"air.address_space", i32 {addr_space_id}, !"air.arg_type_size", i32 {size}, !"air.arg_type_align_size", i32 {align}, !"air.arg_type_name", !"{base_name}"'
+        return (meta, addr_space_id)
 
-def _generate_metadata(func_name: str, args: List[Tuple[str, str]]) -> str:
-    lines = []
-    meta_id = 0
-
-    def m(content: str) -> str:
-        nonlocal meta_id
-        lines.append(f"!{meta_id} = {content}")
-        meta_id += 1
-        return f"!{meta_id - 1}"
-
-    # Generate argument metadata
-    arg_meta_nodes = []
-    buffer_idx = 0
-
-    for i, (atype, aname) in enumerate(args):
-        meta_content = _get_air_type_metadata(atype, aname)
-
-        if meta_content == "BUFFER_TEMPLATE":
-            # Assign unique location index for buffers
-            meta_content = f'!"air.buffer", !"air.location_index", i32 {buffer_idx}, i32 1, !"air.read_write", !"air.address_space", i32 1, !"air.arg_type_size", i32 4, !"air.arg_type_align_size", i32 4, !"air.arg_type_name", !"float", !"air.arg_name", !"{aname}"'
-            buffer_idx += 1
-        elif "air.arg_name" not in meta_content:
-            meta_content += f', !"air.arg_name", !"{aname}"'
-
-        arg_meta_nodes.append(m(f"!{{i32 {i}, {meta_content}}}"))
-
-    empty_node = m("!{}")
-
-    # Kernel Signature
-    # We construct a generic signature description for metadata
-    # This is slightly fragile as it replicates the C++ signature logic
-    # but for metadata purposes generic void (...) is often accepted or ignored by some tools,
-    # but strict checking might require matching types.
-    # For now, let's reconstruct a valid-looking sig.
-
-    meta_sig_args = []
-    for atype, aname in args:
-        if "*" in atype:
-            if "shared" in aname:
-                meta_sig_args.append("float addrspace(3)*")
-            else:
-                meta_sig_args.append("float addrspace(1)*")
-        else:
-            meta_sig_args.append(atype)
-
-    sig_str = f"void ({', '.join(meta_sig_args)})*"
-    kernel_node = m(f"!{{{sig_str} @{func_name}, {empty_node}, !{{{', '.join(arg_meta_nodes)}}}}}")
-
-    # Standard Footer Metadata
-    opt_denorms = m('!{!"air.compile.denorms_disable"}')
-    opt_fastmath = m('!{!"air.compile.fast_math_enable"}')
-    opt_fb = m('!{!"air.compile.framebuffer_fetch_enable"}')
-    compile_opts = f"!{{{opt_denorms}, {opt_fastmath}, {opt_fb}}}"
-    ident = m('!{!"Apple metal version 32023.830 (metalfe-32023.830.2)"}')
-    version = m("!{i32 2, i32 7, i32 0}")
-    lang = m('!{!"Metal", i32 3, i32 2, i32 0}')
-    src = m('!{!"input.ll"}')
-
-    footer = [f"\n!air.kernel = !{{{kernel_node}}}", f"!air.compile_options = {compile_opts}", f"!llvm.ident = !{{{ident}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{lang}}}", f"!air.source_file_name = !{{{src}}}"]
-
-    return "\n".join(footer + [""] + lines)
+    # Default value
+    clean_type = arg_type.strip()
+    return (f'!"air.arg_type_name", !"{clean_type}"', 0)
 
 
 def to_air(llvm_ir_text: str) -> str:
-    """Transforms generic LLVM IR strings to Metal AIR format."""
     output_lines = []
 
-    # 1. Header
     output_lines.append('target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"')
     output_lines.append('target triple = "air64_v27-apple-macosx15.0.0"\n')
 
-    in_function_body = False
-    function_name = ""
-    args_info = []  # List[Tuple[type, name]]
-    shared_vars = set()
+    lines = llvm_ir_text.splitlines()
+    i = 0
+    in_function = False
+    func_name = ""
+    args_list: List[Tuple[str, str]] = []  # (type, name)
+    var_addrspaces: Dict[str, int] = {}
 
-    for line in llvm_ir_text.splitlines():
-        # Function Entry
-        if "define" in line and "void" in line:
-            in_function_body = True
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
 
-            # Parse signature: define void @name(...)
-            match = re.search(r"define void @\"?([\w\.]+)\"?\((.*)\)", line)
+        if stripped.startswith("define void"):
+            full_sig = line
+            while "{" not in full_sig:
+                i += 1
+                full_sig += " " + lines[i]
+
+            match = re.search(r"define void @\"?([\w\.]+)\"?\s*\((.*?)\).*?{", full_sig, re.DOTALL)
             if not match:
-                raise ValueError(f"Could not parse function signature: {line}")
+                match = re.search(r"define void @(.+?)\s*\((.*?)\).*?{", full_sig, re.DOTALL)
 
-            function_name = match.group(1)
+            if not match:
+                raise ValueError(f"Failed to parse function signature: {full_sig}")
+
+            raw_name = match.group(1)
+            func_name = raw_name.replace('"', "")
+
             raw_args = match.group(2)
+            arg_chunks = [x.strip() for x in raw_args.split(",")] if raw_args.strip() else []
 
-            # Split args
-            # simplistic split by comma might fail with complex types, but standard for this task
-            arg_list = raw_args.split(",") if raw_args.strip() else []
+            new_sig_parts = []
 
-            new_args_sig = []
-
-            for arg in arg_list:
-                arg = arg.strip()
-                if not arg:
+            for arg_chunk in arg_chunks:
+                if not arg_chunk:
                     continue
-                # format: type %name
-                parts = arg.split()
-                a_name = parts[-1].replace("%", "").replace('"', "")  # strip % and quotes
+                parts = arg_chunk.split()
+                a_name = parts[-1]
                 a_type = " ".join(parts[:-1])
 
-                args_info.append((a_type, a_name))
+                clean_name = a_name.strip()
+                res_type = a_type
 
-                # Determine attributes for new signature
-                air_attr = ""
-                # Map special names to AIR logic
-                if a_name in ["id", "gid", "global_id", "tid", "lid", "local_id"]:
-                    # Value types (i32) need noundef
-                    new_args_sig.append(f"{a_type} noundef %{a_name}")
-                elif "*" in a_type:
-                    # Pointers
-                    if "shared" in a_name:
-                        # Threadgroup memory
-                        shared_vars.add(f"%{a_name}")
-                        new_args_sig.append(f'{a_type.replace("*", "")} addrspace(3)* nocapture noundef "air-buffer-no-alias" %{a_name}')
+                if "*" in a_type:
+                    if "shared" in clean_name:
+                        as_id = 3
                     else:
-                        # Device memory
-                        # We guess readonly/writeonly? defaulting to both rw (no specific attrib) or safely:
-                        # For now, let's use nocapture noundef "air-buffer-no-alias" to be safe.
-                        # We can add readonly/writeonly if we analyze usage, but that's complex.
-                        # existing code used explicit input/output names.
-                        # Let's be generic:
-                        new_args_sig.append(f'{a_type.replace("*", "")} addrspace(1)* nocapture noundef "air-buffer-no-alias" %{a_name}')
+                        as_id = 1
+
+                    var_addrspaces[clean_name] = as_id
+
+                    if "addrspace" not in a_type:
+                        res_type = a_type.replace("*", f" addrspace({as_id})*")
+
+                    new_sig_parts.append(f'{res_type} nocapture noundef "air-buffer-no-alias" {clean_name}')
                 else:
-                    new_args_sig.append(f"{a_type} noundef %{a_name}")
+                    var_addrspaces[clean_name] = 0
+                    new_sig_parts.append(f"{a_type} noundef {clean_name}")
 
-            output_lines.append(f'define void @{function_name}({", ".join(new_args_sig)}) local_unnamed_addr #0 {{')
+                name_no_prefix = clean_name.replace("%", "").replace('"', "")
+                args_list.append((res_type, name_no_prefix))
+
+            output_lines.append(f'define void @{func_name}({", ".join(new_sig_parts)}) local_unnamed_addr #0 {{')
+            in_function = True
+            i += 1
             continue
 
-        # Skip standalone opening brace if it was on a separate line in original IR
-        # (Since we enforced it on the define line above)
-        if in_function_body and line.strip() == "{":
+        if not in_function:
+            i += 1
             continue
 
-        # Function Exit
-        if in_function_body and line.strip() == "}":
-            in_function_body = False
+        if stripped == "}":
+            in_function = False
             output_lines.append("}")
+            i += 1
             continue
 
-        if not in_function_body:
-            continue
-
-        # Body Transformation
-        processed_line = line
-
-        # 1. Intrinsics
+        # Body
         if "call" in line and "barrier" in line:
-            processed_line = "  tail call void @air.wg.barrier(i32 2, i32 1) #2"
-            output_lines.append(processed_line)
+            output_lines.append("  tail call void @air.wg.barrier(i32 2, i32 1) #2")
+            i += 1
             continue
 
-        # 2. Address Space Propagation
-        # Simple data flow: if any operand is shared, result is shared (for pointer ops)
+        def robust_replacer(m):
+            type_part = m.group(1)
+            var_part = m.group(2)
+            as_id = 0
+            if var_part in var_addrspaces:
+                as_id = var_addrspaces[var_part]
+            if as_id > 0:
+                return f"{type_part} addrspace({as_id})* {var_part}"
+            return m.group(0)
 
-        # Identify variables in line
-        vars_in_line = re.findall(r"(%[\w\.\"]+)", line)
+        new_line = re.sub(r"([\w\s<>]+)\*\s+(%[\w\.\"]+)", robust_replacer, line)
 
-        is_shared_op = False
-        for v in vars_in_line:
-            # Check if variable is in our shared set (stripping quotes if stored that way)
-            # Our set stores "%name"
-            if v in shared_vars or v.replace('"', "") in shared_vars:
-                is_shared_op = True
-                break
+        if "=" in new_line:
+            lhs_match = re.search(r"(%[\w\.\"]+)\s*=", new_line)
+            if lhs_match:
+                lhs_var = lhs_match.group(1)
+                if "getelementptr" in new_line or "bitcast" in new_line:
+                    as_match = re.search(r"addrspace\((\d+)\)\*", new_line)
+                    if as_match:
+                        as_id = int(as_match.group(1))
+                        var_addrspaces[lhs_var] = as_id
 
-        if is_shared_op:
-            # If result is produced, mark it as shared
-            # We look for LHS assignment: %res = ...
-            # Only propagate for pointer arithmetic/casting (GEP, bitcast)
-            if "getelementptr" in line or "bitcast" in line:
-                lhs_match = re.match(r"\s*(%[\w\.\"]+)\s*=", line)
-                if lhs_match:
-                    res_var = lhs_match.group(1)
-                    shared_vars.add(res_var)
+        output_lines.append(new_line)
+        i += 1
 
-            # Replace pointer types
-            processed_line = processed_line.replace("float*", "float addrspace(3)*")
-        else:
-            # Default global
-            processed_line = processed_line.replace("float*", "float addrspace(1)*")
-
-        output_lines.append(processed_line)
-
-    # 2. Definitions & Metadata
+    # Metadata Footer
     output_lines.append("\ndeclare void @air.wg.barrier(i32, i32) local_unnamed_addr #1")
     output_lines.append('attributes #0 = { argmemonly mustprogress nofree norecurse nosync nounwind willreturn "approx-func-fp-math"="true" "frame-pointer"="all" "min-legal-vector-width"="0" "no-builtins" "no-infs-fp-math"="true" "no-nans-fp-math"="true" "no-signed-zeros-fp-math"="true" "no-trapping-math"="true" "stack-protector-buffer-size"="8" "unsafe-fp-math"="true" }')
     output_lines.append("attributes #1 = { convergent mustprogress nounwind willreturn }")
     output_lines.append("attributes #2 = { convergent nounwind willreturn }")
 
-    if function_name:
-        output_lines.append(_generate_metadata(function_name, args_info))
+    if func_name:
+        lines = []
+        meta_id = 0
+
+        def m(c):
+            nonlocal meta_id
+            lines.append(f"!{meta_id} = {c}")
+            meta_id += 1
+            return f"!{meta_id-1}"
+
+        arg_meta_refs = []
+        global_buffer_idx = 0
+        threadgroup_buffer_idx = 0
+
+        for i, (at, an) in enumerate(args_list):
+            template, as_id = _get_air_metadata_content(at, an)
+
+            content = template
+            if "{loc_index}" in template:
+                if as_id == 3:
+                    # Threadgroup memory
+                    idx = threadgroup_buffer_idx
+                    threadgroup_buffer_idx += 1
+                else:
+                    # Default/Device memory
+                    idx = global_buffer_idx
+                    global_buffer_idx += 1
+                content = content.replace("{loc_index}", str(idx))
+
+            if "air.arg_name" not in content:
+                content += f', !"air.arg_name", !"{an}"'
+
+            arg_meta_refs.append(m(f"!{{i32 {i}, {content}}}"))
+
+        empty = m("!{}")
+        meta_sig_parts = [x[0] for x in args_list]
+        sig_str = f"void ({', '.join(meta_sig_parts)})*"
+        lines.append(f"!{meta_id} = !{{{sig_str} @{func_name}, {empty}, !{{{', '.join(arg_meta_refs)}}}}}")
+        kernel_node = f"!{meta_id}"
+        meta_id += 1
+
+        lines.append(f'!{meta_id} = !{{!"air.compile.denorms_disable"}}')
+        denorms = f"!{meta_id}"
+        meta_id += 1
+        lines.append(f'!{meta_id} = !{{!"air.compile.fast_math_enable"}}')
+        fastmath = f"!{meta_id}"
+        meta_id += 1
+        lines.append(f'!{meta_id} = !{{!"air.compile.framebuffer_fetch_enable"}}')
+        fb = f"!{meta_id}"
+        meta_id += 1
+        lines.append(f'!{meta_id} = !{{!"Apple metal version 32023.830 (metalfe-32023.830.2)"}}')
+        ident = f"!{meta_id}"
+        meta_id += 1
+        lines.append(f"!{meta_id} = !{{i32 2, i32 7, i32 0}}")
+        version = f"!{meta_id}"
+        meta_id += 1
+        lines.append(f'!{meta_id} = !{{!"Metal", i32 3, i32 2, i32 0}}')
+        lang = f"!{meta_id}"
+        meta_id += 1
+        lines.append(f'!{meta_id} = !{{!"input.ll"}}')
+        src = f"!{meta_id}"
+        meta_id += 1
+
+        output_lines.extend([f"!air.kernel = !{{{kernel_node}}}", f"!air.compile_options = !{{{denorms}, {fastmath}, {fb}}}", f"!llvm.ident = !{{{ident}}}", f"!air.version = !{{{version}}}", f"!air.language_version = !{{{lang}}}", f"!air.source_file_name = !{{{src}}}", ""])
+        output_lines.extend(lines)
 
     return "\n".join(output_lines)
