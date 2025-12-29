@@ -17,7 +17,6 @@ class AirTranslator:
         self.used_intrinsics: Set[str] = set()
 
     def translate(self) -> str:
-        # main entry point for conversion
         self._write_header()
 
         i = 0
