@@ -1,4 +1,5 @@
 import pytest
+
 from utils import compile_to_metallib, run_kernel_1d_int
 
 LLVM_IR_LOOP = """

@@ -2,6 +2,7 @@ import ctypes
 
 import Metal
 import pytest
+
 from utils import _create_compute_pipeline, _execute_kernel, compile_to_metallib
 
 # 2D Convolution: out[y,x] = sum over kernel of input[y+ky, x+kx] * kernel[ky, kx]

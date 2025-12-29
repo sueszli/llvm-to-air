@@ -1,6 +1,7 @@
 import math
 
 import pytest
+
 from utils import compile_to_metallib, run_kernel_1d_float
 
 # batch Normalization: out[i] = gamma * (x[i] - mean) / sqrt(var + eps) + beta

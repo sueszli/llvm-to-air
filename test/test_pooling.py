@@ -1,4 +1,5 @@
 import pytest
+
 from utils import compile_to_metallib, run_kernel_1d_float
 
 # max pooling 2D: out[y,x] = max(input[2*y:2*y+2, 2*x:2*x+2])

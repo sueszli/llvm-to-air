@@ -2,36 +2,7 @@ import platform
 import re
 from typing import Dict, List, Set, Tuple
 
-
-def _get_type_info(type_str: str) -> Tuple[str, int, int]:
-    """Returns (base_name, size, align) for a given LLVM type."""
-    t = type_str.strip()
-
-    # Vector types: <N x type>
-    if t.startswith("<") and t.endswith(">"):
-        match = re.search(r"<(\d+)\s+x\s+([\w\d\.]+)>", t)
-        if match:
-            count = int(match.group(1))
-            elem_type = match.group(2)
-            base_name, elem_size, elem_align = _get_type_info(elem_type)
-            # Alignment for vectors is usually equal to its size (up to a point/PO2)
-            total_size = elem_size * count
-            return (base_name, total_size, total_size)
-
-    if "double" in t:
-        return ("double", 8, 8)
-    if "float" in t:
-        return ("float", 4, 4)
-    if "i64" in t:
-        return ("long", 8, 8)
-    if "i32" in t:
-        return ("int", 4, 4)
-    if "i16" in t:
-        return ("short", 2, 2)
-    if "i8" in t:
-        return ("char", 1, 1)
-
-    return ("void", 0, 0)
+from .utils import AIR_TO_LLVM_TYPES, LLVM_TO_AIR_TYPES, get_type_info
 
 
 class AirConverter:
@@ -40,13 +11,13 @@ class AirConverter:
         self.output_lines: List[str] = []
         self.kernels: List[Tuple[str, List[Tuple[str, str, bool]]]] = []
 
-        # Per-function state
+        # per-function state
         self.var_addrspaces: Dict[str, int] = {}
         self.scalar_loads: Dict[str, str] = {}
         self.used_intrinsics: Set[str] = set()
 
     def convert(self) -> str:
-        """Main entry point for conversion."""
+        # main entry point for conversion
         self._write_header()
 
         i = 0
@@ -58,7 +29,7 @@ class AirConverter:
                 i = self._process_function(i)
                 continue
 
-            # Comments and metadata
+            # comments and metadata
             if stripped.startswith(";") or stripped.endswith(":"):
                 self.output_lines.append(line)
 
@@ -68,6 +39,7 @@ class AirConverter:
         return "\n".join(self.output_lines)
 
     def _write_header(self):
+        # architecture info (don't know how to make this portable)
         self.output_lines.append('target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v16:16:16-v24:32:32-v32:32:32-v48:64:64-v64:64:64-v96:128:128-v128:128:128-v192:256:256-v256:256:256-v512:512:512-v1024:1024:1024-n8:16:32"')
         assert platform.system() == "Darwin"
         mac_version = platform.mac_ver()[0]
@@ -75,78 +47,81 @@ class AirConverter:
 
     def _process_function(self, start_idx: int) -> int:
         """Parses and converts a single function."""
-        # Reset per-function state
         self.var_addrspaces = {}
         self.scalar_loads = {}
 
-        func_name, args_list, air_sig, next_idx = self._parse_signature(start_idx)
+        func_name, args_list, air_sig, idx = self._parse_signature(start_idx)
         self.kernels.append((func_name, args_list))
         self.output_lines.append(air_sig)
 
-        # Load scalar arguments at the start of the function body
-        # Check if the first non-empty line is a label
-        i = next_idx
+        idx = self._skip_comments_and_empty(idx)
 
-        # Skip empty lines/comments at start
-        while i < len(self.lines):
-            stripped = self.lines[i].strip()
+        # Handle empty body
+        if idx < len(self.lines) and self.lines[idx].strip() == "}":
+            self.output_lines.append("}")
+            return idx + 1
+
+        # Handle explicit entry label
+        if idx < len(self.lines) and self.lines[idx].strip().endswith(":"):
+            self.output_lines.append(self.lines[idx])
+            idx += 1
+
+        self._insert_scalar_loads(args_list)
+        return self._convert_body(idx)
+
+    def _skip_comments_and_empty(self, idx: int) -> int:
+        while idx < len(self.lines):
+            stripped = self.lines[idx].strip()
             if not stripped or stripped.startswith(";"):
-                self.output_lines.append(self.lines[i])
-                i += 1
+                self.output_lines.append(self.lines[idx])
+                idx += 1
                 continue
             break
+        return idx
 
-        # If we hit end of function (empty body?)
-        if i < len(self.lines) and self.lines[i].strip() == "}":
-            self.output_lines.append("}")
-            return i + 1
-
-        # Check for explicit entry label
-        if i < len(self.lines) and self.lines[i].strip().endswith(":"):
-            self.output_lines.append(self.lines[i])
-            i += 1
-
-        # Insert loads after label (or at start if no label)
-        self._insert_scalar_loads(args_list)
-
-        # Process body
-        while i < len(self.lines):
-            line = self.lines[i]
+    def _convert_body(self, idx: int) -> int:
+        while idx < len(self.lines):
+            line = self.lines[idx]
             stripped = line.strip()
 
             if stripped == "}":
                 self.output_lines.append("}")
-                return i + 1
+                return idx + 1
 
             if stripped.startswith(";") or stripped.endswith(":"):
                 self.output_lines.append(line)
             else:
-                self._validate_opcode(line)
-                new_line = self._convert_instruction(line)
-                self.output_lines.append(new_line)
+                self.output_lines.append(self._convert_instruction(line))
 
-            i += 1
-
-        return i
+            idx += 1
+        return idx
 
     def _parse_signature(self, start_idx: int) -> Tuple[str, List[Tuple[str, str, bool]], str, int]:
         """Parses function signature and sets up argument tracking."""
-        # Accumulate lines until we find the opening brace
-        pkg = self.lines[start_idx]
-        i = start_idx
-        while "{" not in pkg:
-            i += 1
-            pkg += " " + self.lines[i]
+        pkg, idx = self._read_signature_lines(start_idx)
 
         sig_match = re.search(r"define\s+void\s+@\"?([\w\.]+)\"?\s*\((.*?)\).*?{", pkg, re.DOTALL)
         if not sig_match:
             raise ValueError(f"Failed to parse function signature: {pkg}")
 
-        raw_name = sig_match.group(1)
-        func_name = raw_name.replace('"', "")
+        func_name = sig_match.group(1).replace('"', "")
         raw_args = sig_match.group(2)
-        arg_chunks = [x.strip() for x in raw_args.split(",")] if raw_args.strip() else []
 
+        args_list, new_sig_parts = self._process_arguments(raw_args)
+
+        air_sig = f'define void @{func_name}({", ".join(new_sig_parts)}) #0 {{'
+        return func_name, args_list, air_sig, idx + 1
+
+    def _read_signature_lines(self, start_idx: int) -> Tuple[str, int]:
+        pkg = self.lines[start_idx]
+        i = start_idx
+        while "{" not in pkg:
+            i += 1
+            pkg += " " + self.lines[i]
+        return pkg, i
+
+    def _process_arguments(self, raw_args: str) -> Tuple[List[Tuple[str, str, bool]], List[str]]:
+        arg_chunks = [x.strip() for x in raw_args.split(",")] if raw_args.strip() else []
         new_sig_parts = []
         args_list = []
 
@@ -158,47 +133,50 @@ class AirConverter:
             a_name = parts[-1]
             a_type = " ".join(parts[:-1])
             clean_name = a_name.strip()
-
-            # Helper to strip quotes/percent for matching
             name_no_prefix = clean_name.replace("%", "").replace('"', "")
-            res_type = a_type
-            is_output = False
 
-            if "*" in a_type:
-                # Buffer pointer
-                as_id = 3 if "shared" in clean_name else 1
-                self.var_addrspaces[clean_name] = as_id
+            res_type, is_output, sig_part = self._process_single_argument(a_type, clean_name, name_no_prefix)
 
-                if any(x in clean_name.lower() for x in ["out", "result"]) or clean_name in ["%C", "%c"]:
-                    is_output = True
-
-                if "addrspace" not in a_type:
-                    res_type = a_type.replace("*", f" addrspace({as_id})*")
-
-                new_sig_parts.append(f'{res_type} nocapture noundef "air-buffer-no-alias" {clean_name}')
-            else:
-                # Scalar or Thread ID
-                if name_no_prefix in ["id", "gid", "global_id", "tid", "lid", "local_id"]:
-                    self.var_addrspaces[clean_name] = 0
-                    new_sig_parts.append(f"{a_type} {clean_name}")
-                else:
-                    # Regular scalar -> Constant Buffer conversion
-                    base_type = a_type.strip()
-                    ptr_type = f"{base_type} addrspace(2)*"
-                    _, size, align = _get_type_info(base_type)
-
-                    self.var_addrspaces[clean_name] = 2
-                    new_sig_parts.append(f'{ptr_type} nocapture noundef readonly align {align} dereferenceable({size}) "air-buffer-no-alias" {clean_name}')
-
-                    # Setup load map
-                    loaded_var = f"%{name_no_prefix}.loaded"
-                    self.scalar_loads[clean_name] = loaded_var
-                    res_type = ptr_type
-
+            new_sig_parts.append(sig_part)
             args_list.append((res_type, name_no_prefix, is_output))
 
-        air_sig = f'define void @{func_name}({", ".join(new_sig_parts)}) #0 {{'
-        return func_name, args_list, air_sig, i + 1
+        return args_list, new_sig_parts
+
+    def _process_single_argument(self, a_type: str, clean_name: str, name_no_prefix: str) -> Tuple[str, bool, str]:
+        if "*" in a_type:
+            return self._process_buffer_argument(a_type, clean_name)
+        return self._process_scalar_argument(a_type, clean_name, name_no_prefix)
+
+    def _process_buffer_argument(self, a_type: str, clean_name: str) -> Tuple[str, bool, str]:
+        as_id = 3 if "shared" in clean_name else 1
+        self.var_addrspaces[clean_name] = as_id
+
+        is_output = any(x in clean_name.lower() for x in ["out", "result"]) or clean_name in ["%C", "%c"]
+
+        res_type = a_type
+        if "addrspace" not in a_type:
+            res_type = a_type.replace("*", f" addrspace({as_id})*")
+
+        sig_part = f'{res_type} nocapture noundef "air-buffer-no-alias" {clean_name}'
+        return res_type, is_output, sig_part
+
+    def _process_scalar_argument(self, a_type: str, clean_name: str, name_no_prefix: str) -> Tuple[str, bool, str]:
+        # Thread ID checks
+        if name_no_prefix in ["id", "gid", "global_id", "tid", "lid", "local_id"]:
+            self.var_addrspaces[clean_name] = 0
+            return a_type, False, f"{a_type} {clean_name}"
+
+        # Regular scalar -> Constant Buffer conversion
+        base_type = a_type.strip()
+        ptr_type = f"{base_type} addrspace(2)*"
+        _, size, align = get_type_info(base_type)
+
+        self.var_addrspaces[clean_name] = 2
+        sig_part = f'{ptr_type} nocapture noundef readonly align {align} dereferenceable({size}) "air-buffer-no-alias" {clean_name}'
+
+        # Setup load map
+        self.scalar_loads[clean_name] = f"%{name_no_prefix}.loaded"
+        return ptr_type, False, sig_part
 
     def _insert_scalar_loads(self, args_list: List[Tuple[str, str, bool]]):
         for param_name, loaded_var in self.scalar_loads.items():
@@ -208,12 +186,6 @@ class AirConverter:
 
             if base_type:
                 self.output_lines.append(f"  {loaded_var} = load {base_type}, {base_type} addrspace(2)* {param_name}, align 4")
-
-    def _validate_opcode(self, line: str):
-        stripped = line.strip()
-        rhs = stripped.split("=", 1)[1].strip() if "=" in stripped else stripped
-        # Just ensure it's not empty, validation logic from previous script was weak anyway
-        # Main point is to ensure we don't crash on empty lines
 
     def _convert_instruction(self, line: str) -> str:
         # 1. Handle Barrier
@@ -246,15 +218,14 @@ class AirConverter:
             (r"(%\S+)\s*=\s*fptosi\s+(\S+)\s+(%\S+)\s+to\s+(\S+)", "@air.convert.s.{dst}.f.{src}"),
         ]
 
-        type_map = {"float": "f32", "double": "f64", "i32": "i32", "i16": "i16", "i8": "i8", "i64": "i64"}
-
         for pattern, intr_template in conversions:
             match = re.search(pattern, line)
             if match:
                 res, src_t, src_v, dst_t = match.groups()
-                air_src = type_map.get(src_t, src_t)
-                air_dst = type_map.get(dst_t, dst_t)
+                air_src = LLVM_TO_AIR_TYPES.get(src_t, src_t)
+                air_dst = LLVM_TO_AIR_TYPES.get(dst_t, dst_t)
                 intr = intr_template.format(src=air_src, dst=air_dst)
+
                 self.used_intrinsics.add(intr)
 
                 # Determine call attributes
@@ -333,12 +304,11 @@ class AirConverter:
         # Convert Handling
         if "air.convert" in intr:
             parts = intr.replace("@air.convert.", "").split(".")
+
             # f.f32.u.i32 -> f, f32, u, i32
             # map air types back to llvm types for declaration
-            type_map = {"f32": "float", "f64": "double", "i32": "i32", "i16": "i16", "i8": "i8", "i64": "i64"}
-
             def map_type(t):
-                return type_map.get(t, t)
+                return AIR_TO_LLVM_TYPES.get(t, t)
 
             # Index 1 is dest type, Index 3 is src type
             ret_type = map_type(parts[1])
@@ -422,7 +392,7 @@ class AirConverter:
         # Buffers
         if "addrspace" in arg_type or "*" in arg_type:
             base_t_str = re.sub(r"addrspace\(\d+\)", "", arg_type.replace("*", "")).strip()
-            base_name, size, align = _get_type_info(base_t_str)
+            base_name, size, align = get_type_info(base_t_str)
 
             as_id = 3 if "addrspace(3)" in arg_type else (2 if "addrspace(2)" in arg_type else 1)
 
