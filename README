@@ -29,7 +29,7 @@ implementation of the LLVM IR to AIR lowering pass.
     +--------------+      +--------------+      +--------------+
 
 The core contribution is `src/llvm_to_air.py`, which takes LLVM IR and lowers it 
-to Apple's AIR intermediate representation. This enables a full compilation 
+to Apple's Intermediate Representation AIR. This enables a full compilation 
 pipeline from high-level MLIR dialects down to executable code on Apple Silicon 
 GPUs. The implementation leverages xDSL to write the entire compiler stack in 
 Python, making it accessible and hackable.
