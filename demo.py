@@ -259,7 +259,6 @@ class Compiler:
         device, pso = create_compute_pipeline(kernel_argmax_binary(), "argmax")
 
         buf_a = self._create_metal_buffer(device, A["data"])
-        # Output is Mx1, but elements are floats (indices)
         buf_b = self._create_metal_buffer(device, None, length=M * 4)
 
         m_bytes = struct.pack("i", M)
