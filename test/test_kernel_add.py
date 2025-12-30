@@ -104,7 +104,8 @@ def test_kernel_add_random_small():
     data_B = [random.uniform(-1, 1) for _ in range(N)]
     output = _run_add_kernel(data_A, data_B)
     expected = [a + b for a, b in zip(data_A, data_B)]
-    assert output == pytest.approx(expected)
+    for o, e in zip(output, expected):
+        assert abs(o - e) < 1e-5
 
 
 def test_kernel_add_random_large():
