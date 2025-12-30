@@ -9,9 +9,10 @@
 
 import ctypes
 import struct
+from typing import Any
 
 import Metal
-from lark import Lark
+from lark import Lark, Tree
 
 from src.air_to_metallib import create_compute_pipeline, execute_kernel
 from src.kernel_add import kernel_add_binary
@@ -105,11 +106,11 @@ NUMBER: /-?\d+(\.\d+)?/
 
 
 class Compiler:
-    def run(self, tree: Lark):
+    def run(self, tree: Tree) -> None:
         for expr in tree.children:
             self._eval(expr)
 
-    def _eval(self, node):
+    def _eval(self, node: Tree) -> dict[str, Any] | None:
         match node.data:
             case "tensor_expr":
                 return {"rows": int(node.children[0]), "cols": int(node.children[1]), "data": [float(val) for val in node.children[2:]]}
@@ -144,7 +145,7 @@ class Compiler:
             case "print_expr":
                 self._print_tensor(self._eval(node.children[0]))
 
-    def _exec_matmul(self, A, B):
+    def _exec_matmul(self, A: dict[str, Any], B: dict[str, Any]) -> dict[str, Any]:
         M, K, K_rhs, N = A["rows"], A["cols"], B["rows"], B["cols"]
         assert K == K_rhs, f"dimension mismatch: {M}x{K} @ {K_rhs}x{N}"
 
@@ -167,7 +168,7 @@ class Compiler:
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
-    def _exec_add(self, A, B):
+    def _exec_add(self, A: dict[str, Any], B: dict[str, Any]) -> dict[str, Any]:
         M, N = A["rows"], A["cols"]
         assert M == B["rows"] and N == B["cols"], f"dimension mismatch: {M}x{N} + {B['rows']}x{B['cols']}"
 
@@ -190,7 +191,7 @@ class Compiler:
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
-    def _exec_sub(self, A, B):
+    def _exec_sub(self, A: dict[str, Any], B: dict[str, Any]) -> dict[str, Any]:
         M, N = A["rows"], A["cols"]
         assert M == B["rows"] and N == B["cols"], f"dimension mismatch: {M}x{N} - {B['rows']}x{B['cols']}"
 
@@ -213,7 +214,7 @@ class Compiler:
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
-    def _exec_relu(self, A):
+    def _exec_relu(self, A: dict[str, Any]) -> dict[str, Any]:
         M, N = A["rows"], A["cols"]
         device, pso = create_compute_pipeline(kernel_relu_binary(), "relu")
 
@@ -233,7 +234,7 @@ class Compiler:
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
-    def _exec_sigmoid(self, A):
+    def _exec_sigmoid(self, A: dict[str, Any]) -> dict[str, Any]:
         M, N = A["rows"], A["cols"]
         device, pso = create_compute_pipeline(kernel_sigmoid_binary(), "sigmoid")
 
@@ -253,7 +254,7 @@ class Compiler:
         output = memoryview(buf_b.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
-    def _exec_argmax(self, A):
+    def _exec_argmax(self, A: dict[str, Any]) -> dict[str, Any]:
         M, N = A["rows"], A["cols"]
         device, pso = create_compute_pipeline(kernel_argmax_binary(), "argmax")
 
@@ -275,7 +276,7 @@ class Compiler:
         output = memoryview(buf_b.contents().as_buffer(M * 4)).cast("f")
         return {"rows": M, "cols": 1, "data": list(output)}
 
-    def _exec_softmax(self, A):
+    def _exec_softmax(self, A: dict[str, Any]) -> dict[str, Any]:
         M, N = A["rows"], A["cols"]
         device, pso = create_compute_pipeline(kernel_softmax_binary(), "softmax")
 
@@ -296,7 +297,7 @@ class Compiler:
         output = memoryview(buf_b.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
-    def _exec_mean(self, A):
+    def _exec_mean(self, A: dict[str, Any]) -> dict[str, Any]:
         M, N = A["rows"], A["cols"]
         device, pso = create_compute_pipeline(kernel_mean_binary(), "mean")
 
@@ -317,7 +318,7 @@ class Compiler:
         output = memoryview(buf_b.contents().as_buffer(M * 4)).cast("f")
         return {"rows": M, "cols": 1, "data": list(output)}
 
-    def _exec_mul(self, A, B):
+    def _exec_mul(self, A: dict[str, Any], B: dict[str, Any]) -> dict[str, Any]:
         M, N = A["rows"], A["cols"]
         assert M == B["rows"] and N == B["cols"], f"dimension mismatch: {M}x{N} * {B['rows']}x{B['cols']}"
 
@@ -340,7 +341,7 @@ class Compiler:
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
-    def _exec_sum(self, A):
+    def _exec_sum(self, A: dict[str, Any]) -> dict[str, Any]:
         M, N = A["rows"], A["cols"]
         device, pso = create_compute_pipeline(kernel_sum_binary(), "sum")
 
@@ -361,7 +362,7 @@ class Compiler:
         output = memoryview(buf_b.contents().as_buffer(M * 4)).cast("f")
         return {"rows": M, "cols": 1, "data": list(output)}
 
-    def _exec_transpose(self, A):
+    def _exec_transpose(self, A: dict[str, Any]) -> dict[str, Any]:
         M, N = A["rows"], A["cols"]
         device, pso = create_compute_pipeline(kernel_transpose_binary(), "transpose")
 
@@ -382,7 +383,7 @@ class Compiler:
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": N, "cols": M, "data": list(output)}
 
-    def _exec_scale(self, A, scalar):
+    def _exec_scale(self, A: dict[str, Any], scalar: float) -> dict[str, Any]:
         M, N = A["rows"], A["cols"]
         device, pso = create_compute_pipeline(kernel_scale_binary(), "scale")
 
@@ -403,7 +404,7 @@ class Compiler:
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
-    def _exec_pow(self, A, B):
+    def _exec_pow(self, A: dict[str, Any], B: dict[str, Any]) -> dict[str, Any]:
         M, N = A["rows"], A["cols"]
         assert M == B["rows"] and N == B["cols"], f"dimension mismatch: {M}x{N} ** {B['rows']}x{B['cols']}"
 
@@ -426,7 +427,7 @@ class Compiler:
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
-    def _exec_log(self, A):
+    def _exec_log(self, A: dict[str, Any]) -> dict[str, Any]:
         M, N = A["rows"], A["cols"]
         device, pso = create_compute_pipeline(kernel_log_binary(), "log")
 
@@ -446,14 +447,14 @@ class Compiler:
         output = memoryview(buf_b.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
-    def _create_metal_buffer(self, device, data, length=None):
+    def _create_metal_buffer(self, device: Any, data: list[float] | None, length: int | None = None) -> Any:
         if length:
             return device.newBufferWithLength_options_(length, Metal.MTLResourceStorageModeShared)
 
         raw_array = (ctypes.c_float * len(data))(*data)
         return device.newBufferWithBytes_length_options_(raw_array, ctypes.sizeof(raw_array), Metal.MTLResourceStorageModeShared)
 
-    def _print_tensor(self, tensor):
+    def _print_tensor(self, tensor: dict[str, Any]) -> None:
         print(f"\nTensor({tensor['rows']} x {tensor['cols']}):")
         cols = tensor["cols"]
         for i in range(tensor["rows"]):
