@@ -17,17 +17,17 @@ their implementation is closed source [^2].
 This project reverse engineers that missing piece and provides an open source
 implementation of the LLVM IR to AIR lowering pass.
 
-+----------------+      +----------------+      +----------------+
-|    Frontend    |----->|  MLIR Dialect  |----->|  LLVM Bitcode  |
-|                |      |                |      |  (Open Source) |
-+----------------+      +----------------+      +----------------+
-                                                         |
-                                               [ src/llvm_to_air.py ]
-                                                         |
-+----------------+      +----------------+      +--------v-------+
-|   Apple GPU    |<-----|    Metallib    |<-----|   AIR Bitcode  |
-|   (M-Series)   |      |    (Binary)    |      |  (Proprietary) |
-+----------------+      +----------------+      +----------------+
+  +----------------+      +----------------+      +----------------+
+  |    Frontend    |----->|  MLIR Dialect  |----->|  LLVM Bitcode  |
+  |                |      |                |      | (Open Source)  |
+  +----------------+      +----------------+      +----------------+
+                                                           |
+                                                 [ src/llvm_to_air.py ]
+                                                           |
+  +----------------+      +----------------+      +--------v-------+
+  |   Apple GPU    |<-----|    Metallib    |<-----|   AIR Bitcode  |
+  |   (M-Series)   |      |    (Binary)    |      | (Proprietary)  |
+  +----------------+      +----------------+      +----------------+
 
 The core contribution is `src/llvm_to_air.py`, which takes LLVM IR and lowers it 
 to Apple's Intermediate Representation AIR. This enables a full compilation 
