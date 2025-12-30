@@ -216,8 +216,8 @@ if __name__ == "__main__":
         print(f"{name:<15}: {t:.2f} ms")
 
     base = results["plain"]
-    print("\nspeedups relative to vanilla python:")
+    print("\nrelative to vanilla python:")
     for name, t in results.items():
         if name == "plain":
             continue
-        print(f"{name:<15}: {t/base:.2f}x faster")
+        print(f"{name:<15}: {base/t:.2f}x faster")

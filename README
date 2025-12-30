@@ -1,24 +1,73 @@
-$ toilet -f smblock -w 100 "yo" 
-      
-▌ ▌▞▀▖
-▚▄▌▌ ▌
-▗▄▘▝▀ 
+$ toilet -f smblock -w 1000 $'Reverse Engineering\nApple\'s IR' 
 
+    ▛▀▖                   ▛▀▘      ▗             ▗       
+    ▙▄▘▞▀▖▌ ▌▞▀▖▙▀▖▞▀▘▞▀▖ ▙▄ ▛▀▖▞▀▌▄ ▛▀▖▞▀▖▞▀▖▙▀▖▄ ▛▀▖▞▀▌
+    ▌▚ ▛▀ ▐▐ ▛▀ ▌  ▝▀▖▛▀  ▌  ▌ ▌▚▄▌▐ ▌ ▌▛▀ ▛▀ ▌  ▐ ▌ ▌▚▄▌
+    ▘ ▘▝▀▘ ▘ ▝▀▘▘  ▀▀ ▝▀▘ ▀▀▘▘ ▘▗▄▘▀▘▘ ▘▝▀▘▝▀▘▘  ▀▘▘ ▘▗▄▘
+    ▞▀▖      ▜    ▝▌   ▜▘▛▀▖
+    ▙▄▌▛▀▖▛▀▖▐ ▞▀▖▝▞▀▘ ▐ ▙▄▘
+    ▌ ▌▙▄▘▙▄▘▐ ▛▀  ▝▀▖ ▐ ▌▚ 
+    ▘ ▘▌  ▌   ▘▝▀▘ ▀▀  ▀▘▘ ▘
 
-world is more compute hungry than ever
-new accelerators coming out fast
-yet we cant target them
-MLIR gives us the tools to find the right abstractions (both low and high) for portable performance
-yet it doesn't have an apple silicon gpu backend
+help me write the README of my project called "llvm-to-air". use concise sentences, keep it short, use a casual but academic tone. the target audience are scientific kernel and compiler engineers.
 
-https://discourse.llvm.org/t/rfc-mps-dialect-in-mlir/77102
+motivation: we need portable performance. world is more compute hungry than ever. new accelerators coming out fast, lots of new hardware, but software isn't keeping up. most hardware once aquired isn't utilized to its full extent. MLIR is the right tool for portable performance. but it doesn't have an apple silicon gpu backend. this is unfortunate because the market share of apple silicon is growing fast and lots of people have gpus sitting idle that they could donate to ie. protein folding.
+
+see https://discourse.llvm.org/t/rfc-mps-dialect-in-mlir/77102
 
 however mojo lang which uses MLIR has found a way to target MPS:
-mlir -> llvm ir (xdsl lowering) -> air (the llvm_to_air.py script) -> metallib
 
-https://forum.modular.com/t/apple-silicon-gpu-support-in-mojo/2295
+see https://forum.modular.com/t/apple-silicon-gpu-support-in-mojo/2295
 
-this is a learning opportunity for me to try to publically replicate how i believe they have achieved this
-and show an end-to-end example of how to implement a custom language / mlir-dialect and then lower it to metallib!
+they explained that they achieved this through: 
 
-obviously the best way to write hand tuned kernels is to write them in metal performance shaders - but this could be also interesting if we want to work on the lower level
+language (mlir dialect) -> llvm ir -> air (based on llvm, closed source) -> metallib
+
+however their code is still closed source.
+
+i was curious how they achieved this and started to look into it.
+so i wrote my own stack from scratch, starting with my own language as an mlir dialect, lowered it to llvm ir, then started reverse engineering air and metallib.
+the contribution here is `src/llvm_to_air.py` which is the missing piece in the current MLIR library that lets you lower llvm ir to air and then directly target the apple silicon gpus.
+
+the most intereting part is that by leveraging xDSL we could write the entirety of the stack in python.
+but the implementation is very experimental and brittle, especially given that we had to reverse engineer air but a proof of concept and to my knowledge the first open source e2e reverse engineered stack for apple silicon gpus with the missing air lowering.
+
+this allowed me to write my own ml kernels and get huge performance boosts
+
+$ uv run demo_mandelbrot.py
+
+    mandelbrot benchmark (1,048,576 pixels)
+                                                                                                        
+    results (avg latency ms):
+    gpu            : 2.47 ms
+    numba          : 188.56 ms
+    numpy          : 1519.57 ms
+    numpy+numba    : 1820.99 ms
+    plain          : 2840.38 ms
+
+    relative to vanilla python:
+    gpu            : 1150.23x faster
+    numba          : 15.06x faster
+    numpy          : 1.87x faster
+    numpy+numba    : 1.56x faster
+
+for more traditional kernels like matmul used in ml libraries check out `demo_linalg.py` which also has a common-lisp subset as a frontend.
+it isn't a particularly efficient implementation because we aren't doing any of the real optimizations like kernel fusion of the entire computation graph into a single kernel or tiling and any of the things modern compiler backends do, but it serves to prove the concept.
+
+
+$ uv run demo_linalg.py    
+
+    (print
+        (add
+            (matmul
+                (tensor (2 3) (-1.0 2.0 -3.0 4.0 -5.0 6.0))
+                (tensor (3 2) (7.0 8.0 9.0 10.0 11.0 12.0))
+            )
+            (tensor (2 2) (100.0 100.0 100.0 100.0))
+        )
+    )
+
+
+    Tensor(2 x 2):
+            78.000000 76.000000
+            149.000000 154.000000
