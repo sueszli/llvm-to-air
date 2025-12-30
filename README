@@ -54,7 +54,6 @@ $ uv run demo_mandelbrot.py
 for more traditional kernels like matmul used in ml libraries check out `demo_linalg.py` which also has a common-lisp subset as a frontend.
 it isn't a particularly efficient implementation because we aren't doing any of the real optimizations like kernel fusion of the entire computation graph into a single kernel or tiling and any of the things modern compiler backends do, but it serves to prove the concept.
 
-
 $ uv run demo_linalg.py    
 
     (print
