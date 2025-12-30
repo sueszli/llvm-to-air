@@ -26,7 +26,7 @@ implementation of the LLVM IR to AIR lowering pass.
                                                            |
   +----------------+      +----------------+      +--------v-------+
   |   Apple GPU    |<-----|    Metallib    |<-----|   AIR Bitcode  |
-  |   (M-Series)   |      |    (Binary)    |      | (Proprietary)  |
+  |   (M-Series)   |      |    (Binary)    |      |  (Proprietary) |
   +----------------+      +----------------+      +----------------+
 
 The core contribution is `src/llvm_to_air.py`, which takes LLVM IR and lowers it 
