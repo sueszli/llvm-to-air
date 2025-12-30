@@ -88,5 +88,5 @@ $ uv run demo_linalg.py
 References
 --------------------------------------------------------------------------------
 
-[^1] MPS dialect in MLIR: https://discourse.llvm.org/t/rfc-mps-dialect-in-mlir/77102
-[^2] MPS in Mojo: https://forum.modular.com/t/apple-silicon-gpu-support-in-mojo/2295
+[^1] MLIR: https://discourse.llvm.org/t/rfc-mps-dialect-in-mlir/77102
+[^2] Mojo: https://forum.modular.com/t/apple-silicon-gpu-support-in-mojo/2295
