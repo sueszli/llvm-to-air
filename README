@@ -35,7 +35,7 @@ GPUs. The implementation leverages xDSL to write the entire compiler stack in
 Python, making it accessible and hackable.
 
 Fair warning: this is experimental and brittle. AIR is closed source and 
-undocumented, so everything here is reverse engineered. But it works, and to 
+undocumented, so everything here is reverse engineered. But it works and to 
 my knowledge this is the first open source end-to-end stack for Apple Silicon.
 
 --------------------------------------------------------------------------------
