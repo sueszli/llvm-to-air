@@ -30,8 +30,7 @@ def _gen_kernel_softmax() -> ModuleOp:
     softmax_func = func.FuncOp("softmax", func_type)
     module.body.blocks[0].add_op(softmax_func)
 
-    entry_block = Block(arg_types=args)
-    softmax_func.body.add_block(entry_block)
+    entry_block = softmax_func.body.blocks[0]
 
     builder = Builder(InsertPoint.at_end(entry_block))
 

@@ -29,8 +29,7 @@ def _gen_kernel_argmax() -> ModuleOp:
     argmax_func = func.FuncOp("argmax", func_type)
     module.body.blocks[0].add_op(argmax_func)
 
-    entry_block = Block(arg_types=args)
-    argmax_func.body.add_block(entry_block)
+    entry_block = argmax_func.body.blocks[0]
 
     builder = Builder(InsertPoint.at_end(entry_block))
 

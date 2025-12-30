@@ -29,8 +29,7 @@ def _gen_kernel_matmul() -> ModuleOp:
     matmul_func = func.FuncOp("matmul", func_type)
     module.body.blocks[0].add_op(matmul_func)
 
-    entry_block = Block(arg_types=args)
-    matmul_func.body.add_block(entry_block)
+    entry_block = matmul_func.body.blocks[0]
 
     builder = Builder(InsertPoint.at_end(entry_block))
 

@@ -4,7 +4,7 @@ from io import StringIO
 
 from xdsl.builder import Builder, InsertPoint
 from xdsl.dialects import arith, func, llvm, math
-from xdsl.dialects.builtin import Block, FloatAttr, FunctionType, ModuleOp, f32, i32, i64
+from xdsl.dialects.builtin import FloatAttr, FunctionType, ModuleOp, f32, i32, i64
 from xdsl.printer import Printer
 
 from src.air_to_metallib import compile_to_metallib
@@ -26,8 +26,7 @@ def _gen_kernel_sigmoid() -> ModuleOp:
     sigmoid_func = func.FuncOp("sigmoid", func_type)
     module.body.blocks[0].add_op(sigmoid_func)
 
-    entry_block = Block(arg_types=args)
-    sigmoid_func.body.add_block(entry_block)
+    entry_block = sigmoid_func.body.blocks[0]
 
     builder = Builder(InsertPoint.at_end(entry_block))
 

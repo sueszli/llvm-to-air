@@ -4,7 +4,7 @@ from io import StringIO
 
 from xdsl.builder import Builder, InsertPoint
 from xdsl.dialects import arith, func, llvm
-from xdsl.dialects.builtin import Block, FunctionType, ModuleOp, f32, i32, i64
+from xdsl.dialects.builtin import FunctionType, ModuleOp, f32, i32, i64
 from xdsl.printer import Printer
 
 from src.air_to_metallib import compile_to_metallib
@@ -27,8 +27,7 @@ def _gen_kernel_add() -> ModuleOp:
     add_func = func.FuncOp("add", func_type)
     module.body.blocks[0].add_op(add_func)
 
-    entry_block = Block(arg_types=args)
-    add_func.body.add_block(entry_block)
+    entry_block = add_func.body.blocks[0]
 
     builder = Builder(InsertPoint.at_end(entry_block))
 

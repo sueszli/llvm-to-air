@@ -123,6 +123,161 @@ module {
 
         self.assertIn("mlir-translate failed", str(cm.exception))
 
+    def test_fix_mlir_empty_string(self):
+        mlir_input = ""
+        fixed = fix_mlir(mlir_input)
+        self.assertEqual(fixed, "")
+
+    def test_fix_mlir_multiple_blocks_pattern(self):
+        mlir_input = """
+        ^bb0(%arg0: i32):
+          test
+        ^bb0(%arg0: i32):
+          test2
+        """
+        fixed = fix_mlir(mlir_input)
+        self.assertNotIn("^bb0", fixed)
+        self.assertEqual(fixed.count("test"), 2)
+
+    def test_fix_mlir_no_block_id(self):
+        mlir_input = "(%arg0: i32):"
+        fixed = fix_mlir(mlir_input)
+        self.assertEqual(fixed, mlir_input)
+
+    def test_gen_kernel_matmul_has_correct_name(self):
+        module = kernel_matmul._gen_kernel_matmul()
+        func_op = list(module.body.blocks[0].ops)[0]
+        self.assertTrue(isinstance(func_op, func.FuncOp))
+        self.assertEqual(func_op.sym_name.data, "matmul")
+
+    def test_gen_kernel_matmul_has_args(self):
+        module = kernel_matmul._gen_kernel_matmul()
+        func_op = list(module.body.blocks[0].ops)[0]
+        self.assertEqual(len(func_op.body.blocks[0].args), 7)
+
+    def test_gen_kernel_matmul_has_body(self):
+        module = kernel_matmul._gen_kernel_matmul()
+        func_op = list(module.body.blocks[0].ops)[0]
+        self.assertTrue(len(func_op.body.blocks[0].ops) > 0)
+
+    def test_gen_kernel_matmul_module_op(self):
+        module = kernel_matmul._gen_kernel_matmul()
+        self.assertIsInstance(module, ModuleOp)
+
+    @patch("src.kernel_matmul.subprocess.run")
+    @patch("src.kernel_matmul.compile_to_metallib")
+    @patch("src.kernel_matmul.to_air")
+    def test_kernel_matmul_binary_calls_to_air(self, mock_to_air, mock_compile, mock_subprocess):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "code"
+        mock_subprocess.return_value = mock_proc
+
+        mock_to_air.return_value = "air_code"
+        mock_compile.return_value = b"bin"
+
+        kernel_matmul.kernel_matmul_binary.cache_clear()
+        kernel_matmul.kernel_matmul_binary()
+
+        mock_to_air.assert_called()
+
+    @patch("src.kernel_matmul.subprocess.run")
+    @patch("src.kernel_matmul.compile_to_metallib")
+    @patch("src.kernel_matmul.to_air")
+    def test_kernel_matmul_binary_calls_compile(self, mock_to_air, mock_compile, mock_subprocess):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "code"
+        mock_subprocess.return_value = mock_proc
+
+        mock_to_air.return_value = "air_code"
+        mock_compile.return_value = b"bin"
+
+        kernel_matmul.kernel_matmul_binary.cache_clear()
+        kernel_matmul.kernel_matmul_binary()
+
+        mock_compile.assert_called_with("air_code")
+
+    def test_kernel_matmul_binary_cache_behavior(self):
+        with patch("src.kernel_matmul.subprocess.run") as mock_subprocess:
+            mock_proc = MagicMock()
+            mock_proc.returncode = 0
+            mock_proc.stdout = "code"
+            mock_subprocess.return_value = mock_proc
+
+            with patch("src.kernel_matmul.compile_to_metallib") as mock_compile:
+                mock_compile.return_value = b"bin"
+                with patch("src.kernel_matmul.to_air") as mock_to_air:
+                    mock_to_air.return_value = "air"
+
+                    kernel_matmul.kernel_matmul_binary.cache_clear()
+                    r1 = kernel_matmul.kernel_matmul_binary()
+                    r2 = kernel_matmul.kernel_matmul_binary()
+
+                    self.assertEqual(r1, r2)
+                    self.assertEqual(mock_subprocess.call_count, 2)
+                    self.assertEqual(mock_to_air.call_count, 1)
+
+    @patch("src.kernel_matmul.subprocess.run")
+    def test_kernel_matmul_binary_success_with_warnings(self, mock_subprocess):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "code"
+        mock_proc.stderr = "warning: something minor"
+        mock_subprocess.return_value = mock_proc
+
+        with patch("src.kernel_matmul.compile_to_metallib") as mock_compile, patch("src.kernel_matmul.to_air") as mock_to_air:
+            mock_compile.return_value = b"bin"
+            mock_to_air.return_value = "air"
+
+            kernel_matmul.kernel_matmul_binary.cache_clear()
+            result = kernel_matmul.kernel_matmul_binary()
+            self.assertEqual(result, b"bin")
+
+    @patch("src.kernel_matmul.subprocess.run")
+    @patch("src.kernel_matmul.compile_to_metallib")
+    @patch("src.kernel_matmul.to_air")
+    def test_kernel_matmul_binary_to_air_exception(self, mock_to_air, mock_compile, mock_subprocess):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "code"
+        mock_subprocess.return_value = mock_proc
+
+        mock_to_air.side_effect = Exception("Air gen failed")
+
+        kernel_matmul.kernel_matmul_binary.cache_clear()
+
+        with self.assertRaises(Exception) as cm:
+            kernel_matmul.kernel_matmul_binary()
+        self.assertIn("Air gen failed", str(cm.exception))
+
+    @patch("src.kernel_matmul.subprocess.run")
+    @patch("src.kernel_matmul.compile_to_metallib")
+    @patch("src.kernel_matmul.to_air")
+    def test_kernel_matmul_binary_compile_exception(self, mock_to_air, mock_compile, mock_subprocess):
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = "code"
+        mock_subprocess.return_value = mock_proc
+
+        mock_to_air.return_value = "air"
+        mock_compile.side_effect = Exception("Compile failed")
+
+        kernel_matmul.kernel_matmul_binary.cache_clear()
+
+        with self.assertRaises(Exception) as cm:
+            kernel_matmul.kernel_matmul_binary()
+        self.assertIn("Compile failed", str(cm.exception))
+
+    @patch("src.kernel_matmul.subprocess.run")
+    def test_kernel_matmul_binary_subprocess_file_not_found(self, mock_subprocess):
+        mock_subprocess.side_effect = FileNotFoundError("mlir-opt not found")
+
+        kernel_matmul.kernel_matmul_binary.cache_clear()
+
+        with self.assertRaises(FileNotFoundError):
+            kernel_matmul.kernel_matmul_binary()
+
 
 if __name__ == "__main__":
     unittest.main()
