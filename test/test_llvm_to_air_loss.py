@@ -98,7 +98,6 @@ def run_loss_function(binary, y_pred, y_true, kernel_name):
 
     buf_pred = create_buffer(y_pred)
     buf_true = create_buffer(y_true)
-    # output buffer size = input size (all threads write the same value)
     buf_output = device.newBufferWithLength_options_(len(y_pred) * 4, Metal.MTLResourceStorageModeShared)
 
     def encode_args(encoder):
@@ -118,23 +117,14 @@ def run_loss_function(binary, y_pred, y_true, kernel_name):
 
 
 def test_cross_entropy_perfect_prediction(binary_cross_entropy):
-    # predicted probabilities: [0.9999, 0.0001, 0.0001, 0.0001] (very confident class 0)
-    # true labels: [1.0, 0.0, 0.0, 0.0] (actually class 0)
-    # loss ≈ -1.0 * log(0.9999) ≈ 0.0001
-
     y_pred = [0.9999, 0.0001, 0.0001, 0.0001]
     y_true = [1.0, 0.0, 0.0, 0.0]
 
     result = run_loss_function(binary_cross_entropy, y_pred, y_true, "cross_entropy")
-    # loss should be very small
     assert result[0] == pytest.approx(0.0, abs=1e-3)
 
 
 def test_cross_entropy_uniform_distribution(binary_cross_entropy):
-    # predicted: [0.25, 0.25, 0.25, 0.25] (uniform)
-    # true: [1.0, 0.0, 0.0, 0.0] (class 0)
-    # loss = -1.0 * log(0.25) = -log(0.25) ≈ 1.386
-
     y_pred = [0.25, 0.25, 0.25, 0.25]
     y_true = [1.0, 0.0, 0.0, 0.0]
 
@@ -145,10 +135,6 @@ def test_cross_entropy_uniform_distribution(binary_cross_entropy):
 
 
 def test_cross_entropy_multi_class(binary_cross_entropy):
-    # predicted: [0.7, 0.2, 0.05, 0.05]
-    # true: [0.0, 1.0, 0.0, 0.0] (class 1)
-    # loss = -1.0 * log(0.2) ≈ 1.609
-
     y_pred = [0.7, 0.2, 0.05, 0.05]
     y_true = [0.0, 1.0, 0.0, 0.0]
 
