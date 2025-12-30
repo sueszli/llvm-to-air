@@ -15,26 +15,42 @@ from lark import Lark
 
 from src.air_to_metallib import create_compute_pipeline, execute_kernel
 from src.kernel_add import kernel_add_binary
+from src.kernel_argmax import kernel_argmax_binary
 from src.kernel_matmul import kernel_matmul_binary
+from src.kernel_relu import kernel_relu_binary
+from src.kernel_sigmoid import kernel_sigmoid_binary
+from src.kernel_softmax import kernel_softmax_binary
 
 SOURCE = """
 (print
     (add
         (matmul
-            (tensor (2 3) (1.0 2.0 3.0 4.0 5.0 6.0))
+            (relu (tensor (2 3) (-1.0 2.0 -3.0 4.0 -5.0 6.0)))
             (tensor (3 2) (7.0 8.0 9.0 10.0 11.0 12.0))
         )
         (tensor (2 2) (100.0 100.0 100.0 100.0))
     )
 )
-"""
+(print
+    (sigmoid (tensor (2 2) (-1.0 0.0 1.0 2.0)))
+)
+(print
+    (argmax (tensor (3 4) (0.0 0.0 1.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 0.0 1.0)))
+)
+(print
+    (softmax (tensor (2 3) (1.0 2.0 3.0 4.0 5.0 6.0)))
+)"""
 
 GRAMMAR = r"""
 start: expr*
-?expr: tensor_expr | matmul_expr | add_expr | print_expr
+?expr: tensor_expr | matmul_expr | add_expr | print_expr | relu_expr | sigmoid_expr | argmax_expr | softmax_expr
 tensor_expr: "(" "tensor" "(" NUMBER NUMBER ")" "(" NUMBER* ")" ")"
 matmul_expr: "(" "matmul" expr expr ")"
 add_expr: "(" "add" expr expr ")"
+relu_expr: "(" "relu" expr ")"
+sigmoid_expr: "(" "sigmoid" expr ")"
+argmax_expr: "(" "argmax" expr ")"
+softmax_expr: "(" "softmax" expr ")"
 print_expr: "(" "print" expr ")"
 NUMBER: /-?\d+(\.\d+)?/
 %import common.WS
@@ -56,6 +72,18 @@ class Compiler:
 
         if node.data == "add_expr":
             return self._exec_add(self._eval(node.children[0]), self._eval(node.children[1]))
+
+        if node.data == "sigmoid_expr":
+            return self._exec_sigmoid(self._eval(node.children[0]))
+
+        if node.data == "relu_expr":
+            return self._exec_relu(self._eval(node.children[0]))
+
+        if node.data == "argmax_expr":
+            return self._exec_argmax(self._eval(node.children[0]))
+
+        if node.data == "softmax_expr":
+            return self._exec_softmax(self._eval(node.children[0]))
 
         if node.data == "print_expr":
             self._print_tensor(self._eval(node.children[0]))
@@ -106,6 +134,90 @@ class Compiler:
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
+    def _exec_relu(self, A):
+        M, N = A["rows"], A["cols"]
+        device, pso = create_compute_pipeline(kernel_relu_binary(), "relu")
+
+        buf_a = self._create_metal_buffer(device, A["data"])
+        buf_c = self._create_metal_buffer(device, None, length=M * N * 4)
+
+        num_elements = M * N
+        num_elements_bytes = struct.pack("i", num_elements)
+
+        def _encode_args(encoder):
+            encoder.setBuffer_offset_atIndex_(buf_a, 0, 0)
+            encoder.setBuffer_offset_atIndex_(buf_c, 0, 1)
+            encoder.setBytes_length_atIndex_(num_elements_bytes, 4, 2)
+
+        execute_kernel(device, pso, Metal.MTLSize(num_elements, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
+
+        output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
+        return {"rows": M, "cols": N, "data": list(output)}
+
+    def _exec_sigmoid(self, A):
+        M, N = A["rows"], A["cols"]
+        device, pso = create_compute_pipeline(kernel_sigmoid_binary(), "sigmoid")
+
+        buf_a = self._create_metal_buffer(device, A["data"])
+        buf_b = self._create_metal_buffer(device, None, length=M * N * 4)
+
+        num_elements = M * N
+        num_elements_bytes = struct.pack("i", num_elements)
+
+        def _encode_args(encoder):
+            encoder.setBuffer_offset_atIndex_(buf_a, 0, 0)
+            encoder.setBuffer_offset_atIndex_(buf_b, 0, 1)
+            encoder.setBytes_length_atIndex_(num_elements_bytes, 4, 2)
+
+        execute_kernel(device, pso, Metal.MTLSize(num_elements, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
+
+        output = memoryview(buf_b.contents().as_buffer(M * N * 4)).cast("f")
+        return {"rows": M, "cols": N, "data": list(output)}
+
+    def _exec_argmax(self, A):
+        M, N = A["rows"], A["cols"]
+        device, pso = create_compute_pipeline(kernel_argmax_binary(), "argmax")
+
+        buf_a = self._create_metal_buffer(device, A["data"])
+        # Output is Mx1, but elements are floats (indices)
+        buf_b = self._create_metal_buffer(device, None, length=M * 4)
+
+        m_bytes = struct.pack("i", M)
+        n_bytes = struct.pack("i", N)
+
+        def _encode_args(encoder):
+            encoder.setBuffer_offset_atIndex_(buf_a, 0, 0)
+            encoder.setBuffer_offset_atIndex_(buf_b, 0, 1)
+            encoder.setBytes_length_atIndex_(m_bytes, 4, 2)
+            encoder.setBytes_length_atIndex_(n_bytes, 4, 3)
+
+        execute_kernel(device, pso, Metal.MTLSize(M, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
+
+        output = memoryview(buf_b.contents().as_buffer(M * 4)).cast("f")
+        return {"rows": M, "cols": 1, "data": list(output)}
+
+    def _exec_softmax(self, A):
+        M, N = A["rows"], A["cols"]
+        device, pso = create_compute_pipeline(kernel_softmax_binary(), "softmax")
+
+        buf_a = self._create_metal_buffer(device, A["data"])
+        buf_b = self._create_metal_buffer(device, None, length=M * N * 4)
+
+        m_bytes = struct.pack("i", M)
+        n_bytes = struct.pack("i", N)
+
+        def _encode_args(encoder):
+            encoder.setBuffer_offset_atIndex_(buf_a, 0, 0)
+            encoder.setBuffer_offset_atIndex_(buf_b, 0, 1)
+            encoder.setBytes_length_atIndex_(m_bytes, 4, 2)
+            encoder.setBytes_length_atIndex_(n_bytes, 4, 3)
+
+        # Dispatch with M threads (one per row)
+        execute_kernel(device, pso, Metal.MTLSize(M, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
+
+        output = memoryview(buf_b.contents().as_buffer(M * N * 4)).cast("f")
+        return {"rows": M, "cols": N, "data": list(output)}
+
     def _create_metal_buffer(self, device, data, length=None):
         if length:
             return device.newBufferWithLength_options_(length, Metal.MTLResourceStorageModeShared)
@@ -114,9 +226,10 @@ class Compiler:
         return device.newBufferWithBytes_length_options_(raw_array, ctypes.sizeof(raw_array), Metal.MTLResourceStorageModeShared)
 
     def _print_tensor(self, tensor):
-        print(f"Tensor({tensor['rows']} x {tensor['cols']}):")
+        print(f"\nTensor({tensor['rows']} x {tensor['cols']}):")
         cols = tensor["cols"]
         for i in range(tensor["rows"]):
+            print("\t", end="")
             print(" ".join(f"{val:.6f}" for val in tensor["data"][i * cols : (i + 1) * cols]))
 
 
