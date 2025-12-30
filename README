@@ -20,3 +20,5 @@ https://forum.modular.com/t/apple-silicon-gpu-support-in-mojo/2295
 
 this is a learning opportunity for me to try to publically replicate how i believe they have achieved this
 and show an end-to-end example of how to implement a custom language / mlir-dialect and then lower it to metallib!
+
+obviously the best way to write hand tuned kernels is to write them in metal performance shaders - but this could be also interesting if we want to work on the lower level
