@@ -65,7 +65,7 @@ $ uv run demo_mandelbrot.py
 Lisp Frontend
 --------------------------------------------------------------------------------
 
-Check `demo_linalg.py` for a Common Lisp subset as a frontend.
+Check out `demo_linalg.py` for a Common Lisp subset as a frontend.
 
 $ uv run demo_linalg.py
 
