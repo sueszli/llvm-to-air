@@ -26,9 +26,9 @@ from src.kernel_mandelbrot import kernel_mandelbrot_binary
 # kernels
 #
 
-WIDTH = 1920
-HEIGHT = 1080
-MAX_ITER = 128
+WIDTH = 1 << 10
+HEIGHT = 1 << 10
+MAX_ITER = 1 << 7
 
 
 def get_gpu_args():
@@ -177,60 +177,47 @@ def run_plain(args) -> float:
 
 
 #
-# benchmark main
+# benchmark
 #
 
 
-NUM_WARMUP_RUNS = 1 # 5
-NUM_BENCHMARK_RUNS = 5 # 20
+NUM_WARMUP_RUNS = 5
+NUM_BENCHMARK_RUNS = 20
 
 
-class Benchmark:
-    def __init__(self, name: str, func: Callable[[], float]):
-        self.name = name
-        self.func = func
-        self.times: list[float] = []
-
-    def run(self) -> float:
-        for _ in tqdm(range(NUM_WARMUP_RUNS), desc=f"warming up {self.name}", ncols=100, leave=False):
-            self.func()
-
-        for _ in tqdm(range(NUM_BENCHMARK_RUNS), desc=f"benchmarking {self.name}", ncols=100, leave=False):
-            t = self.func()
-            self.times.append(t)
-
-        return sum(self.times) / len(self.times) * 1000  # ms
-
-
-def get_gpu_result(resources):
-    buf = resources[2]
-    return list(memoryview(buf.contents().as_buffer(WIDTH * HEIGHT * 4)).cast("f"))
+def benchmark(*elems: tuple[str, Callable[[], float]]) -> dict[str, float]:
+    results = {}
+    for name, func in elems:
+        for _ in tqdm(range(NUM_WARMUP_RUNS), desc=f"warming up {name}", ncols=100, leave=False):
+            func()
+        times = []
+        for _ in tqdm(range(NUM_BENCHMARK_RUNS), desc=f"benchmarking {name}", ncols=100, leave=False):
+            times.append(func())
+        results[name] = sum(times) / len(times) * 1000  # ms
+    return results
 
 
 if __name__ == "__main__":
-    print(f"mandelbrot benchmark ({WIDTH * HEIGHT:,} px, {MAX_ITER} iters)")
+    print(f"mandelbrot benchmark ({WIDTH * HEIGHT:,} pixels)")
 
     gpu_args = get_gpu_args()
     cpu_args = get_cpu_args()
 
-    benchmarks = [
+    results = benchmark(
         ("gpu", lambda: run_gpu(gpu_args)),
-        ("numpy", lambda: run_numpy(cpu_args)),
         ("numba", lambda: run_numba(cpu_args)),
+        ("numpy", lambda: run_numpy(cpu_args)),
         ("numpy+numba", lambda: run_numpy_numba(cpu_args)),
         ("plain", lambda: run_plain(cpu_args)),
-    ]
-
-    results = {}
-    for name, func in benchmarks:
-        results[name] = Benchmark(name, func, num_runs=NUM_BENCHMARK_RUNS).run()
+    )
 
     print("\nresults (avg latency ms):")
     for name, t in results.items():
         print(f"{name:<15}: {t:.2f} ms")
 
-    base = results["gpu"]
-    print("\nspeedups (vs gpu):")
+    base = results["plain"]
+    print("\nspeedups relative to vanilla python:")
     for name, t in results.items():
-        if name != "gpu":
-            print(f"gpu vs {name:<12}: {t/base:.2f}x")
+        if name == "plain":
+            continue
+        print(f"{name:<15}: {t/base:.2f}x faster")
