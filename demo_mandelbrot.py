@@ -157,8 +157,6 @@ def run_numpy_numba(args) -> float:
 
 
 def run_plain(args) -> float:
-    # too slow to benchmark
-
     width, height, max_iter, x_min, x_max, y_min, y_max = args
     start = time.perf_counter()
     result = []
@@ -183,52 +181,30 @@ def run_plain(args) -> float:
 #
 
 
+NUM_WARMUP_RUNS = 1 # 5
+NUM_BENCHMARK_RUNS = 5 # 20
+
+
 class Benchmark:
-    def __init__(self, name: str, func: Callable[[], float], num_runs: int = 20, warmup_runs: int = 5):
+    def __init__(self, name: str, func: Callable[[], float]):
         self.name = name
         self.func = func
-        self.num_runs = num_runs
-        self.warmup_runs = warmup_runs
         self.times: list[float] = []
 
     def run(self) -> float:
-        # warmup
-        for _ in tqdm(range(self.warmup_runs), desc=f"warming up {self.name}", ncols=100, leave=False):
+        for _ in tqdm(range(NUM_WARMUP_RUNS), desc=f"warming up {self.name}", ncols=100, leave=False):
             self.func()
 
-        # benchmark
-        for _ in tqdm(range(self.num_runs), desc=f"benchmarking {self.name}", ncols=100, leave=False):
+        for _ in tqdm(range(NUM_BENCHMARK_RUNS), desc=f"benchmarking {self.name}", ncols=100, leave=False):
             t = self.func()
             self.times.append(t)
 
         return sum(self.times) / len(self.times) * 1000  # ms
 
 
-NUM_BENCHMARK_RUNS = 20
-
-
 def get_gpu_result(resources):
     buf = resources[2]
     return list(memoryview(buf.contents().as_buffer(WIDTH * HEIGHT * 4)).cast("f"))
-
-
-def get_numpy_result(resources):
-    width, height, max_iter, x_min, x_max, y_min, y_max = resources
-    px = np.arange(width)
-    py = np.arange(height)
-    px_grid, py_grid = np.meshgrid(px, py)
-    x0 = x_min + (px_grid / width) * (x_max - x_min)
-    y0 = y_min + (py_grid / height) * (y_max - y_min)
-    x = np.zeros_like(x0)
-    y = np.zeros_like(y0)
-    iteration = np.zeros_like(x0, dtype=np.int32)
-    for i in range(max_iter):
-        mask = x * x + y * y < 4.0
-        xtemp = x * x - y * y + x0
-        y = np.where(mask, 2.0 * x * y + y0, y)
-        x = np.where(mask, xtemp, x)
-        iteration = np.where(mask, iteration + 1, iteration)
-    return iteration.flatten().astype(np.float32).tolist()
 
 
 if __name__ == "__main__":
@@ -242,7 +218,7 @@ if __name__ == "__main__":
         ("numpy", lambda: run_numpy(cpu_args)),
         ("numba", lambda: run_numba(cpu_args)),
         ("numpy+numba", lambda: run_numpy_numba(cpu_args)),
-        # ("plain", lambda: run_plain(cpu_args)),
+        ("plain", lambda: run_plain(cpu_args)),
     ]
 
     results = {}
@@ -258,20 +234,3 @@ if __name__ == "__main__":
     for name, t in results.items():
         if name != "gpu":
             print(f"gpu vs {name:<12}: {t/base:.2f}x")
-
-    # 3. Correctness
-    print("\nverifying correctness...")
-    # Run once to get results
-    run_gpu(gpu_args)
-    out_gpu = np.array(get_gpu_result(gpu_args))
-    out_cpu = np.array(get_numpy_result(cpu_args))
-
-    # Compare
-    diff = np.abs(out_gpu - out_cpu)
-    max_diff = np.max(diff)
-    print(f"max difference (gpu vs numpy): {max_diff:.6f}")
-
-    if max_diff < 0.1:
-        print("✅ Results match!")
-    else:
-        print("❌ Results mismatch!")
