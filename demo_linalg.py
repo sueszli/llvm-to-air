@@ -30,6 +30,8 @@ from src.kernel_sub import kernel_sub_binary
 from src.kernel_sum import kernel_sum_binary
 from src.kernel_transpose import kernel_transpose_binary
 
+# linear layer
+# y = Wx + b
 SOURCE = """
 (print
     (add
@@ -39,42 +41,6 @@ SOURCE = """
         )
         (tensor (2 2) (100.0 100.0 100.0 100.0))
     )
-)
-(print
-    (sigmoid (tensor (2 2) (-1.0 0.0 1.0 2.0)))
-)
-(print
-    (argmax (tensor (3 4) (0.0 0.0 1.0 0.0  0.0 1.0 0.0 0.0  0.0 0.0 0.0 1.0)))
-)
-(print
-    (softmax (tensor (2 3) (1.0 2.0 3.0 4.0 5.0 6.0)))
-)
-(print
-    (mean (tensor (2 3) (1.0 2.0 3.0 4.0 5.0 6.0)))
-)
-(print
-    (mul (tensor (2 3) (1.0 2.0 3.0 4.0 5.0 6.0)) (tensor (2 3) (2.0 2.0 2.0 0.5 0.5 0.5)))
-)
-(print
-    (sub (tensor (2 3) (1.0 2.0 3.0 4.0 5.0 6.0)) (tensor (2 3) (0.5 0.5 0.5 1.0 1.0 1.0)))
-)
-(print
-    (sum (tensor (2 3) (1.0 2.0 3.0 4.0 5.0 6.0)))
-)
-(print
-    (scale (tensor (2 3) (1.0 2.0 3.0 4.0 5.0 6.0)) 0.5)
-)
-(print
-    (transpose (tensor (2 3) (1.0 2.0 3.0 4.0 5.0 6.0)))
-)
-(print
-    (pow (tensor (2 3) (2.0 3.0 4.0 5.0 10.0 2.0)) (tensor (2 3) (2.0 3.0 0.5 1.0 2.0 3.0)))
-)
-(print
-    (log (tensor (2 3) (1.0 2.718281828 7.389056099 1.0 2.718281828 20.085536923)))
-)
-(print
-    (transpose (tensor (2 3) (1.0 2.0 3.0 4.0 5.0 6.0)))
 )
 """
 

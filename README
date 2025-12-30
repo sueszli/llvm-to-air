@@ -4,10 +4,19 @@ $ toilet -f smblock -w 100 "yo"
 ▚▄▌▌ ▌
 ▗▄▘▝▀ 
 
-my own gpu language (xdsl module) -> mlir -> llvm ir (xdsl lowering) -> air (the llvm_to_air.py script) -> metallib
 
+world is more compute hungry than ever
+new accelerators coming out fast
+yet we cant target them
+MLIR gives us the tools to find the right abstractions (both low and high) for portable performance
+yet it doesn't have an apple silicon gpu backend
 
-based on:
+https://discourse.llvm.org/t/rfc-mps-dialect-in-mlir/77102
+
+however mojo lang which uses MLIR has found a way to target MPS:
+mlir -> llvm ir (xdsl lowering) -> air (the llvm_to_air.py script) -> metallib
 
 https://forum.modular.com/t/apple-silicon-gpu-support-in-mojo/2295
 
+this is a learning opportunity for me to try to publically replicate how i believe they have achieved this
+and show an end-to-end example of how to implement a custom language / mlir-dialect and then lower it to metallib!
