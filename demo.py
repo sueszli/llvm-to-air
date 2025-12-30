@@ -16,6 +16,7 @@ from lark import Lark
 from src.air_to_metallib import create_compute_pipeline, execute_kernel
 from src.kernel_add import kernel_add_binary
 from src.kernel_argmax import kernel_argmax_binary
+from src.kernel_log import kernel_log_binary
 from src.kernel_matmul import kernel_matmul_binary
 from src.kernel_mean import kernel_mean_binary
 from src.kernel_mul import kernel_mul_binary
@@ -69,6 +70,9 @@ SOURCE = """
     (pow (tensor (2 3) (2.0 3.0 4.0 5.0 10.0 2.0)) (tensor (2 3) (2.0 3.0 0.5 1.0 2.0 3.0)))
 )
 (print
+    (log (tensor (2 3) (1.0 2.718281828 7.389056099 1.0 2.718281828 20.085536923)))
+)
+(print
     (transpose (tensor (2 3) (1.0 2.0 3.0 4.0 5.0 6.0)))
 )
 """
@@ -76,7 +80,7 @@ SOURCE = """
 
 GRAMMAR = r"""
 start: expr*
-?expr: tensor_expr | matmul_expr | add_expr | sub_expr | print_expr | relu_expr | sigmoid_expr | argmax_expr | softmax_expr | mean_expr | mul_expr | sum_expr | transpose_expr | scale_expr | pow_expr
+?expr: tensor_expr | matmul_expr | add_expr | sub_expr | print_expr | relu_expr | sigmoid_expr | argmax_expr | softmax_expr | mean_expr | mul_expr | sum_expr | transpose_expr | scale_expr | pow_expr | log_expr
 tensor_expr: "(" "tensor" "(" NUMBER NUMBER ")" "(" NUMBER* ")" ")"
 matmul_expr: "(" "matmul" expr expr ")"
 add_expr: "(" "add" expr expr ")"
@@ -91,6 +95,7 @@ mul_expr: "(" "mul" expr expr ")"
 sum_expr: "(" "sum" expr ")"
 scale_expr: "(" "scale" expr NUMBER ")"
 pow_expr: "(" "pow" expr expr ")"
+log_expr: "(" "log" expr ")"
 
 print_expr: "(" "print" expr ")"
 NUMBER: /-?\d+(\.\d+)?/
@@ -149,6 +154,9 @@ class Compiler:
 
         if node.data == "pow_expr":
             return self._exec_pow(self._eval(node.children[0]), self._eval(node.children[1]))
+
+        if node.data == "log_expr":
+            return self._exec_log(self._eval(node.children[0]))
 
         if node.data == "print_expr":
             self._print_tensor(self._eval(node.children[0]))
@@ -433,6 +441,26 @@ class Compiler:
         execute_kernel(device, pso, Metal.MTLSize(num_elements, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
 
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
+        return {"rows": M, "cols": N, "data": list(output)}
+
+    def _exec_log(self, A):
+        M, N = A["rows"], A["cols"]
+        device, pso = create_compute_pipeline(kernel_log_binary(), "log")
+
+        buf_a = self._create_metal_buffer(device, A["data"])
+        buf_b = self._create_metal_buffer(device, None, length=M * N * 4)
+
+        num_elements = M * N
+        num_elements_bytes = struct.pack("i", num_elements)
+
+        def _encode_args(encoder):
+            encoder.setBuffer_offset_atIndex_(buf_a, 0, 0)
+            encoder.setBuffer_offset_atIndex_(buf_b, 0, 1)
+            encoder.setBytes_length_atIndex_(num_elements_bytes, 4, 2)
+
+        execute_kernel(device, pso, Metal.MTLSize(num_elements, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
+
+        output = memoryview(buf_b.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
     def _create_metal_buffer(self, device, data, length=None):
