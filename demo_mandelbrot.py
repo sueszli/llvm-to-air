@@ -57,6 +57,44 @@ def run_numpy() -> list[float]:
 
 
 @njit
+def _mandelbrot_numpy_numba_kernel(width: int, height: int, max_iter: int, x_min: float, x_max: float, y_min: float, y_max: float) -> np.ndarray:
+    """Numba-JIT compiled vectorized NumPy implementation."""
+    px = np.arange(width)
+    py = np.arange(height)
+    px_grid, py_grid = np.meshgrid(px, py)
+
+    x0 = x_min + (px_grid / width) * (x_max - x_min)
+    y0 = y_min + (py_grid / height) * (y_max - y_min)
+
+    x = np.zeros_like(x0)
+    y = np.zeros_like(y0)
+    iteration = np.zeros_like(x0, dtype=np.int32)
+
+    # vectorized iter
+    for i in range(max_iter):
+        # mask for pixels that haven't escaped yet
+        mask = x * x + y * y < 4.0
+
+        # update only non-escaped pixels
+        xtemp = x * x - y * y + x0
+        y = np.where(mask, 2.0 * x * y + y0, y)
+        x = np.where(mask, xtemp, x)
+
+        # increment iteration count for non-escaped pixels
+        iteration = np.where(mask, iteration + 1, iteration)
+
+    return iteration.flatten().astype(np.float32)
+
+
+def run_numpy_numba() -> list[float]:
+    x_min, x_max = -2.5, 1.0
+    y_min, y_max = -1.0, 1.0
+
+    result = _mandelbrot_numpy_numba_kernel(WIDTH, HEIGHT, MAX_ITER, x_min, x_max, y_min, y_max)
+    return result.tolist()
+
+
+@njit
 def _mandelbrot_numba_kernel(width: int, height: int, max_iter: int, x_min: float, x_max: float, y_min: float, y_max: float) -> np.ndarray:
     result = np.zeros(width * height, dtype=np.float32)
 

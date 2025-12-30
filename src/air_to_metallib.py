@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -69,7 +70,7 @@ def create_compute_pipeline(metallib_binary: bytes, kernel_name: str):
     return device, pso
 
 
-def execute_kernel(device, pso, grid_size, threadgroup_size, encode_args_fn: Callable[[any], None]):
+def execute_kernel(device, pso, grid_size, threadgroup_size, encode_args_fn: Callable[[any], None]) -> float:
     # setup command queue and buffer
     queue = device.newCommandQueue()
     assert queue, "failed to create command queue"
@@ -90,9 +91,12 @@ def execute_kernel(device, pso, grid_size, threadgroup_size, encode_args_fn: Cal
     encoder.dispatchThreads_threadsPerThreadgroup_(grid_size, threadgroup_size)
     encoder.endEncoding()
 
-    # execute and wait for completion
+    start_time = time.perf_counter()
     cmd_buffer.commit()
     cmd_buffer.waitUntilCompleted()
+    end_time = time.perf_counter()
 
     status = cmd_buffer.status()
     assert status == Metal.MTLCommandBufferStatusCompleted, f"command buffer failed with status {status} and error: {cmd_buffer.error()}"
+
+    return end_time - start_time
