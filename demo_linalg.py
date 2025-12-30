@@ -110,6 +110,8 @@ class Compiler:
                 return self._exec_log(self._eval(node.children[0]))
             case "print_expr":
                 self._print_tensor(self._eval(node.children[0]))
+            case _:
+                assert False
 
     def _exec_matmul(self, A: dict[str, Any], B: dict[str, Any]) -> dict[str, Any]:
         M, K, K_rhs, N = A["rows"], A["cols"], B["rows"], B["cols"]

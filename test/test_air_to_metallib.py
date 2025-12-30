@@ -116,27 +116,28 @@ class TestAirToMetallib(unittest.TestCase):
         self.assertIn("generated metallib is empty", str(cm.exception))
 
     @patch("src.air_to_metallib.Metal")
-    @patch("src.air_to_metallib.Foundation")
-    @patch("src.air_to_metallib.tempfile.NamedTemporaryFile")
-    @patch("os.path.exists")
-    @patch("os.remove")
-    def test_create_compute_pipeline_success(self, mock_remove, mock_exists, mock_tempfile, mock_foundation, mock_metal):
+    @patch("src.air_to_metallib.ctypes")
+    @patch("src.air_to_metallib.objc")
+    def test_create_compute_pipeline_success(self, mock_objc, mock_ctypes, mock_metal):
         # mock metal device
         mock_device = MagicMock()
         mock_metal.MTLCreateSystemDefaultDevice.return_value = mock_device
 
-        # mock tempfile
-        mock_tmp = MagicMock()
-        mock_tmp.name = "/tmp/test.metallib"
-        mock_tempfile.return_value.__enter__.return_value = mock_tmp
+        # mock ctypes
+        mock_libdispatch = MagicMock()
+        mock_ctypes.CDLL.return_value = mock_libdispatch
 
-        # mock NSURL
-        mock_url = MagicMock()
-        mock_foundation.NSURL.fileURLWithPath_.return_value = mock_url
+        # mock dispatch_data_create
+        mock_dispatch_data = MagicMock()
+        mock_libdispatch.dispatch_data_create.return_value = mock_dispatch_data
+
+        # mock objc bridge
+        mock_ns_dispatch = MagicMock()
+        mock_objc.objc_object.return_value = mock_ns_dispatch
 
         # mock library
         mock_library = MagicMock()
-        mock_device.newLibraryWithURL_error_.return_value = (mock_library, None)
+        mock_device.newLibraryWithData_error_.return_value = (mock_library, None)
 
         # mock function
         mock_fn = MagicMock()
@@ -146,19 +147,21 @@ class TestAirToMetallib(unittest.TestCase):
         mock_pso = MagicMock()
         mock_device.newComputePipelineStateWithFunction_error_.return_value = (mock_pso, None)
 
-        mock_exists.return_value = True
-
         # call
         device, pso = air_to_metallib.create_compute_pipeline(b"binary", "kernel_name")
 
         # assertions
         self.assertEqual(device, mock_device)
         self.assertEqual(pso, mock_pso)
-        mock_tmp.write.assert_called_with(b"binary")
-        mock_device.newLibraryWithURL_error_.assert_called_with(mock_url, None)
+
+        # Verify ctypes calls
+        mock_ctypes.create_string_buffer.assert_called()
+        mock_libdispatch.dispatch_data_create.assert_called()
+        mock_objc.objc_object.assert_called_with(c_void_p=mock_dispatch_data)
+
+        mock_device.newLibraryWithData_error_.assert_called_with(mock_ns_dispatch, None)
         mock_library.newFunctionWithName_.assert_called_with("kernel_name")
         mock_device.newComputePipelineStateWithFunction_error_.assert_called_with(mock_fn, None)
-        mock_remove.assert_called_with("/tmp/test.metallib")
 
     @patch("src.air_to_metallib.Metal")
     def test_create_compute_pipeline_no_device(self, mock_metal):
@@ -168,33 +171,39 @@ class TestAirToMetallib(unittest.TestCase):
         self.assertIn("metal not supported", str(cm.exception))
 
     @patch("src.air_to_metallib.Metal")
-    @patch("src.air_to_metallib.Foundation")
-    @patch("src.air_to_metallib.tempfile.NamedTemporaryFile")
-    @patch("os.path.exists")
-    @patch("os.remove")
-    def test_create_compute_pipeline_library_error(self, mock_remove, mock_exists, mock_tempfile, mock_foundation, mock_metal):
+    @patch("src.air_to_metallib.ctypes")
+    @patch("src.air_to_metallib.objc")
+    def test_create_compute_pipeline_library_error(self, mock_objc, mock_ctypes, mock_metal):
         mock_device = MagicMock()
         mock_metal.MTLCreateSystemDefaultDevice.return_value = mock_device
 
-        mock_tempfile.return_value.__enter__.return_value = MagicMock()
+        # mock ctypes setup
+        mock_libdispatch = MagicMock()
+        mock_ctypes.CDLL.return_value = mock_libdispatch
+        mock_libdispatch.dispatch_data_create.return_value = MagicMock()
+        mock_objc.objc_object.return_value = MagicMock()
 
-        mock_device.newLibraryWithURL_error_.return_value = (None, "Some Error")
+        mock_device.newLibraryWithData_error_.return_value = (None, "Some Error")
 
         with self.assertRaises(AssertionError) as cm:
             air_to_metallib.create_compute_pipeline(b"bin", "name")
         self.assertIn("error loading library", str(cm.exception))
 
     @patch("src.air_to_metallib.Metal")
-    @patch("src.air_to_metallib.Foundation")
-    @patch("src.air_to_metallib.tempfile.NamedTemporaryFile")
-    @patch("os.path.exists")
-    @patch("os.remove")
-    def test_create_compute_pipeline_function_not_found(self, mock_remove, mock_exists, mock_tempfile, mock_foundation, mock_metal):
+    @patch("src.air_to_metallib.ctypes")
+    @patch("src.air_to_metallib.objc")
+    def test_create_compute_pipeline_function_not_found(self, mock_objc, mock_ctypes, mock_metal):
         mock_device = MagicMock()
         mock_metal.MTLCreateSystemDefaultDevice.return_value = mock_device
 
+        # mock ctypes setup
+        mock_libdispatch = MagicMock()
+        mock_ctypes.CDLL.return_value = mock_libdispatch
+        mock_libdispatch.dispatch_data_create.return_value = MagicMock()
+        mock_objc.objc_object.return_value = MagicMock()
+
         mock_library = MagicMock()
-        mock_device.newLibraryWithURL_error_.return_value = (mock_library, None)
+        mock_device.newLibraryWithData_error_.return_value = (mock_library, None)
 
         mock_library.newFunctionWithName_.return_value = None
 

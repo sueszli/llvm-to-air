@@ -1,4 +1,5 @@
-import os
+import ctypes
+import ctypes.util
 import shutil
 import subprocess
 import tempfile
@@ -7,8 +8,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
-import Foundation
 import Metal
+import objc
 
 #
 # air llvm -> metallib
@@ -49,18 +50,29 @@ def create_compute_pipeline(metallib_binary: bytes, kernel_name: str):
     device = Metal.MTLCreateSystemDefaultDevice()
     assert device, "metal not supported on this device"
 
-    # load library from bytes using temp file (workaround for newLibraryWithData segfault)
-    with tempfile.NamedTemporaryFile(suffix=".metallib", delete=False) as f:
-        f.write(metallib_binary)
-        temp_path = f.name
+    # load libdispatch
+    lib_name = ctypes.util.find_library("dispatch")
+    if not lib_name:
+        lib_name = "/usr/lib/system/libdispatch.dylib"
 
-    try:
-        url = Foundation.NSURL.fileURLWithPath_(temp_path)
-        library, error = device.newLibraryWithURL_error_(url, None)
-        assert library, f"error loading library: {error}"
-    finally:
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
+    libdispatch = ctypes.CDLL(lib_name)
+
+    # dispatch_data_create(const void *buffer, size_t size, dispatch_queue_t queue, dispatch_block_t destructor);
+    libdispatch.dispatch_data_create.restype = ctypes.c_void_p
+    libdispatch.dispatch_data_create.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.c_void_p]
+
+    data_len = len(metallib_binary)
+    c_data = ctypes.create_string_buffer(metallib_binary, data_len)
+
+    # create dispatch_data_t wrapping the buffer
+    dispatch_data = libdispatch.dispatch_data_create(c_data, data_len, None, None)
+    assert dispatch_data, "failed to create dispatch_data"
+
+    # bridge c_void_p to object for PyObjC
+    ns_dispatch_data = objc.objc_object(c_void_p=dispatch_data)
+
+    library, error = device.newLibraryWithData_error_(ns_dispatch_data, None)
+    assert library, f"error loading library: {error}"
 
     # get kernel function and create pipeline state
     fn = library.newFunctionWithName_(kernel_name)
