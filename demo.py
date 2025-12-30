@@ -39,7 +39,9 @@ SOURCE = """
 )
 (print
     (softmax (tensor (2 3) (1.0 2.0 3.0 4.0 5.0 6.0)))
-)"""
+)
+"""
+
 
 GRAMMAR = r"""
 start: expr*
