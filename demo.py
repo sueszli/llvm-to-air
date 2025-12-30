@@ -110,56 +110,39 @@ class Compiler:
             self._eval(expr)
 
     def _eval(self, node):
-        if node.data == "tensor_expr":
-            return {"rows": int(node.children[0]), "cols": int(node.children[1]), "data": [float(val) for val in node.children[2:]]}
-
-        if node.data == "matmul_expr":
-            return self._exec_matmul(self._eval(node.children[0]), self._eval(node.children[1]))
-
-        if node.data == "add_expr":
-            return self._exec_add(self._eval(node.children[0]), self._eval(node.children[1]))
-
-        if node.data == "sub_expr":
-            return self._exec_sub(self._eval(node.children[0]), self._eval(node.children[1]))
-
-        if node.data == "sigmoid_expr":
-            return self._exec_sigmoid(self._eval(node.children[0]))
-
-        if node.data == "relu_expr":
-            return self._exec_relu(self._eval(node.children[0]))
-
-        if node.data == "argmax_expr":
-            return self._exec_argmax(self._eval(node.children[0]))
-
-        if node.data == "softmax_expr":
-            return self._exec_softmax(self._eval(node.children[0]))
-
-        if node.data == "mean_expr":
-            return self._exec_mean(self._eval(node.children[0]))
-
-        if node.data == "mul_expr":
-            return self._exec_mul(self._eval(node.children[0]), self._eval(node.children[1]))
-
-        if node.data == "sum_expr":
-            return self._exec_sum(self._eval(node.children[0]))
-
-        if node.data == "scale_expr":
-            return self._exec_scale(self._eval(node.children[0]), float(node.children[1]))
-
-        if node.data == "transpose_expr":
-            return self._exec_transpose(self._eval(node.children[0]))
-
-        if node.data == "scale_expr":
-            return self._exec_scale(self._eval(node.children[0]), float(node.children[1]))
-
-        if node.data == "pow_expr":
-            return self._exec_pow(self._eval(node.children[0]), self._eval(node.children[1]))
-
-        if node.data == "log_expr":
-            return self._exec_log(self._eval(node.children[0]))
-
-        if node.data == "print_expr":
-            self._print_tensor(self._eval(node.children[0]))
+        match node.data:
+            case "tensor_expr":
+                return {"rows": int(node.children[0]), "cols": int(node.children[1]), "data": [float(val) for val in node.children[2:]]}
+            case "matmul_expr":
+                return self._exec_matmul(self._eval(node.children[0]), self._eval(node.children[1]))
+            case "add_expr":
+                return self._exec_add(self._eval(node.children[0]), self._eval(node.children[1]))
+            case "sub_expr":
+                return self._exec_sub(self._eval(node.children[0]), self._eval(node.children[1]))
+            case "sigmoid_expr":
+                return self._exec_sigmoid(self._eval(node.children[0]))
+            case "relu_expr":
+                return self._exec_relu(self._eval(node.children[0]))
+            case "argmax_expr":
+                return self._exec_argmax(self._eval(node.children[0]))
+            case "softmax_expr":
+                return self._exec_softmax(self._eval(node.children[0]))
+            case "mean_expr":
+                return self._exec_mean(self._eval(node.children[0]))
+            case "mul_expr":
+                return self._exec_mul(self._eval(node.children[0]), self._eval(node.children[1]))
+            case "sum_expr":
+                return self._exec_sum(self._eval(node.children[0]))
+            case "scale_expr":
+                return self._exec_scale(self._eval(node.children[0]), float(node.children[1]))
+            case "transpose_expr":
+                return self._exec_transpose(self._eval(node.children[0]))
+            case "pow_expr":
+                return self._exec_pow(self._eval(node.children[0]), self._eval(node.children[1]))
+            case "log_expr":
+                return self._exec_log(self._eval(node.children[0]))
+            case "print_expr":
+                self._print_tensor(self._eval(node.children[0]))
 
     def _exec_matmul(self, A, B):
         M, K, K_rhs, N = A["rows"], A["cols"], B["rows"], B["cols"]
