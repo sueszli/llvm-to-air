@@ -164,7 +164,6 @@ class Compiler:
                 encoder.setBytes_length_atIndex_(val, 4, 3 + i)
 
         execute_kernel(device, pso, Metal.MTLSize(M * N, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
@@ -187,7 +186,6 @@ class Compiler:
             encoder.setBytes_length_atIndex_(num_elements_bytes, 4, 3)
 
         execute_kernel(device, pso, Metal.MTLSize(num_elements, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
@@ -210,7 +208,6 @@ class Compiler:
             encoder.setBytes_length_atIndex_(num_elements_bytes, 4, 3)
 
         execute_kernel(device, pso, Metal.MTLSize(num_elements, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
@@ -230,7 +227,6 @@ class Compiler:
             encoder.setBytes_length_atIndex_(num_elements_bytes, 4, 2)
 
         execute_kernel(device, pso, Metal.MTLSize(num_elements, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
@@ -250,7 +246,6 @@ class Compiler:
             encoder.setBytes_length_atIndex_(num_elements_bytes, 4, 2)
 
         execute_kernel(device, pso, Metal.MTLSize(num_elements, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-
         output = memoryview(buf_b.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
@@ -271,7 +266,6 @@ class Compiler:
             encoder.setBytes_length_atIndex_(n_bytes, 4, 3)
 
         execute_kernel(device, pso, Metal.MTLSize(M, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-
         output = memoryview(buf_b.contents().as_buffer(M * 4)).cast("f")
         return {"rows": M, "cols": 1, "data": list(output)}
 
@@ -292,7 +286,6 @@ class Compiler:
             encoder.setBytes_length_atIndex_(n_bytes, 4, 3)
 
         execute_kernel(device, pso, Metal.MTLSize(M, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-
         output = memoryview(buf_b.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
@@ -313,7 +306,6 @@ class Compiler:
             encoder.setBytes_length_atIndex_(n_bytes, 4, 3)
 
         execute_kernel(device, pso, Metal.MTLSize(M, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-
         output = memoryview(buf_b.contents().as_buffer(M * 4)).cast("f")
         return {"rows": M, "cols": 1, "data": list(output)}
 
@@ -336,7 +328,6 @@ class Compiler:
             encoder.setBytes_length_atIndex_(num_elements_bytes, 4, 3)
 
         execute_kernel(device, pso, Metal.MTLSize(num_elements, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
@@ -357,7 +348,6 @@ class Compiler:
             encoder.setBytes_length_atIndex_(n_bytes, 4, 3)
 
         execute_kernel(device, pso, Metal.MTLSize(M, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-
         output = memoryview(buf_b.contents().as_buffer(M * 4)).cast("f")
         return {"rows": M, "cols": 1, "data": list(output)}
 
@@ -378,7 +368,6 @@ class Compiler:
             encoder.setBytes_length_atIndex_(n_bytes, 4, 3)
 
         execute_kernel(device, pso, Metal.MTLSize(N * M, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": N, "cols": M, "data": list(output)}
 
@@ -399,7 +388,6 @@ class Compiler:
             encoder.setBytes_length_atIndex_(n_bytes, 4, 3)
 
         execute_kernel(device, pso, Metal.MTLSize(M * N, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
@@ -422,7 +410,6 @@ class Compiler:
             encoder.setBytes_length_atIndex_(num_elements_bytes, 4, 3)
 
         execute_kernel(device, pso, Metal.MTLSize(num_elements, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-
         output = memoryview(buf_c.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
@@ -442,7 +429,6 @@ class Compiler:
             encoder.setBytes_length_atIndex_(num_elements_bytes, 4, 2)
 
         execute_kernel(device, pso, Metal.MTLSize(num_elements, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-
         output = memoryview(buf_b.contents().as_buffer(M * N * 4)).cast("f")
         return {"rows": M, "cols": N, "data": list(output)}
 
