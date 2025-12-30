@@ -414,5 +414,7 @@ class Compiler:
 
 
 if __name__ == "__main__":
+    print(SOURCE)
+
     ir = Lark(GRAMMAR, start="start").parse(SOURCE)
     Compiler().run(ir)
