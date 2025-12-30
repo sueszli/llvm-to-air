@@ -10,7 +10,9 @@
 # ///
 
 import struct
+import sys
 import time
+from typing import Callable
 
 import Metal
 import numpy as np
@@ -20,19 +22,80 @@ from src.air_to_metallib import create_compute_pipeline, execute_kernel
 from src.kernel_mandelbrot import kernel_mandelbrot_binary
 
 #
-# kernels
+# utils
 #
 
 
+class Progress:
+    def __init__(self, total: int, prefix: str = "", length: int = 40):
+        self.total = total
+        self.prefix = prefix
+        self.length = length
+        self.start_time = None
+
+    def start(self):
+        self.start_time = time.time()
+        self._print(0)
+
+    def update(self, iteration: int):
+        self._print(iteration)
+
+    def finish(self):
+        self._print(self.total)
+        print()
+
+    def _print(self, iteration: int):
+        percent = 100 * (iteration / float(self.total))
+        filled_length = int(self.length * iteration // self.total)
+        bar = "█" * filled_length + "-" * (self.length - filled_length)
+        if iteration > 0 and self.start_time:
+            elapsed = time.time() - self.start_time
+            rate = iteration / elapsed
+            suffix = f"{rate:.1f} it/s"
+        else:
+            suffix = ""
+        sys.stdout.write(f"\r{self.prefix} |{bar}| {percent:.1f}% {suffix}")
+        sys.stdout.flush()
+
+
+class Benchmark:
+    def __init__(self, name: str, func: Callable[[], float], num_runs: int = 100, warmup_runs: int = 5):
+        self.name = name
+        self.func = func
+        self.num_runs = num_runs
+        self.warmup_runs = warmup_runs
+        self.times: list[float] = []
+
+    def run(self) -> float:
+        # warmup
+        # print(f"warming up {self.name}...")
+        for _ in range(self.warmup_runs):
+            self.func()
+
+        # benchmark
+        progress = Progress(self.num_runs, prefix=f"benchmarking {self.name}")
+        progress.start()
+        for i in range(self.num_runs):
+            t = self.func()
+            self.times.append(t)
+            progress.update(i + 1)
+        progress.finish()
+
+        return sum(self.times) / len(self.times) * 1000  # ms
+
+
+#
+# kernels
+#
+
 WIDTH = 1920
 HEIGHT = 1080
-MAX_ITER = 1 << 3
+MAX_ITER = 128  # increased from 8
 
 
-def run_gpu() -> tuple[list[float], float]:
-    # returns (results, gpu_execution_time)
+# Pre-computation / Allocation helpers
+def get_metal_resources():
     device, pso = create_compute_pipeline(kernel_mandelbrot_binary(), "mandelbrot")
-
     length = WIDTH * HEIGHT * 4
     buf_output = device.newBufferWithLength_options_(length, Metal.MTLResourceStorageModeShared)
 
@@ -46,6 +109,24 @@ def run_gpu() -> tuple[list[float], float]:
     y_min_bytes = struct.pack("f", y_min)
     y_max_bytes = struct.pack("f", y_max)
 
+    return device, pso, buf_output, (width_bytes, height_bytes, max_iter_bytes, x_min_bytes, x_max_bytes, y_min_bytes, y_max_bytes)
+
+
+def get_numpy_resources():
+    x_min, x_max = -2.5, 1.0
+    y_min, y_max = -1.0, 1.0
+    return WIDTH, HEIGHT, MAX_ITER, x_min, x_max, y_min, y_max
+
+
+#
+# Runners
+#
+
+
+def run_gpu(resources) -> float:
+    device, pso, buf_output, args = resources
+    width_bytes, height_bytes, max_iter_bytes, x_min_bytes, x_max_bytes, y_min_bytes, y_max_bytes = args
+
     def _encode_args(encoder):
         encoder.setBuffer_offset_atIndex_(buf_output, 0, 0)
         encoder.setBytes_length_atIndex_(width_bytes, 4, 1)
@@ -56,219 +137,192 @@ def run_gpu() -> tuple[list[float], float]:
         encoder.setBytes_length_atIndex_(y_min_bytes, 4, 6)
         encoder.setBytes_length_atIndex_(y_max_bytes, 4, 7)
 
-    gpu_exec_time = execute_kernel(device, pso, Metal.MTLSize(WIDTH * HEIGHT, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
-    output = memoryview(buf_output.contents().as_buffer(WIDTH * HEIGHT * 4)).cast("f")
-    return list(output), gpu_exec_time
+    return execute_kernel(device, pso, Metal.MTLSize(WIDTH * HEIGHT, 1, 1), Metal.MTLSize(1, 1, 1), _encode_args)
 
 
-def run_numpy() -> list[float]:
-    x_min, x_max = -2.5, 1.0
-    y_min, y_max = -1.0, 1.0
+def run_numpy(resources) -> float:
+    width, height, max_iter, x_min, x_max, y_min, y_max = resources
 
-    px = np.arange(WIDTH)
-    py = np.arange(HEIGHT)
+    start = time.perf_counter()
+    px = np.arange(width)
+    py = np.arange(height)
     px_grid, py_grid = np.meshgrid(px, py)
 
-    x0 = x_min + (px_grid / WIDTH) * (x_max - x_min)
-    y0 = y_min + (py_grid / HEIGHT) * (y_max - y_min)
+    x0 = x_min + (px_grid / width) * (x_max - x_min)
+    y0 = y_min + (py_grid / height) * (y_max - y_min)
 
     x = np.zeros_like(x0)
     y = np.zeros_like(y0)
     iteration = np.zeros_like(x0, dtype=np.int32)
 
-    for i in range(MAX_ITER):
-        # mask for pixels that haven't escaped yet
+    for i in range(max_iter):
         mask = x * x + y * y < 4.0
-        # update only non-escaped pixels
         xtemp = x * x - y * y + x0
         y = np.where(mask, 2.0 * x * y + y0, y)
         x = np.where(mask, xtemp, x)
-        # increment iteration count for non-escaped pixels
         iteration = np.where(mask, iteration + 1, iteration)
 
-    return iteration.flatten().astype(np.float32).tolist()
+    _ = iteration.flatten()
+    end = time.perf_counter()
+    return end - start
 
 
-def run_numba() -> list[float]:
-    x_min, x_max = -2.5, 1.0
-    y_min, y_max = -1.0, 1.0
+@njit
+def _mandelbrot_numba_kernel(width: int, height: int, max_iter: int, x_min: float, x_max: float, y_min: float, y_max: float) -> float:
+    # numba implementation doesn't let us measure inside the kernel
 
-    @njit
-    def _mandelbrot_numba_kernel(width: int, height: int, max_iter: int, x_min: float, x_max: float, y_min: float, y_max: float) -> np.ndarray:
-        result = np.zeros(width * height, dtype=np.float32)
+    result = np.zeros(width * height, dtype=np.float32)
 
-        for py in range(height):
-            for px in range(width):
-                x0 = x_min + (px / width) * (x_max - x_min)
-                y0 = y_min + (py / height) * (y_max - y_min)
-                x, y = 0.0, 0.0
-                iteration = 0
-                while x * x + y * y < 4.0 and iteration < max_iter:
-                    xtemp = x * x - y * y + x0
-                    y = 2.0 * x * y + y0
-                    x = xtemp
-                    iteration += 1
-                result[py * width + px] = float(iteration)
-
-        return result
-
-    result = _mandelbrot_numba_kernel(WIDTH, HEIGHT, MAX_ITER, x_min, x_max, y_min, y_max)
-    return result.tolist()
-
-
-def run_numpy_numba() -> list[float]:
-    x_min, x_max = -2.5, 1.0
-    y_min, y_max = -1.0, 1.0
-
-    @njit
-    def _mandelbrot_numpy_numba_kernel(width: int, height: int, max_iter: int, x_min: float, x_max: float, y_min: float, y_max: float) -> np.ndarray:
-        # super slow. we allocate temporary arrays for every intermediate step of the vectorization
-
-        px = np.arange(width, dtype=np.float32)
-        py = np.arange(height, dtype=np.float32)
-
-        x0 = (x_min + (px / width) * (x_max - x_min)).reshape(1, width).astype(np.float32)
-        y0 = (y_min + (py / height) * (y_max - y_min)).reshape(height, 1).astype(np.float32)
-
-        x = np.zeros((height, width), dtype=np.float32)
-        y = np.zeros((height, width), dtype=np.float32)
-        iteration = np.zeros((height, width), dtype=np.int32)
-
-        four = np.float32(4.0)
-        two = np.float32(2.0)
-
-        for i in range(max_iter):
-            mask = x * x + y * y < four
-            xtemp = x * x - y * y + x0
-            y = np.where(mask, two * x * y + y0, y)
-            x = np.where(mask, xtemp, x)
-            iteration = np.where(mask, iteration + np.int32(1), iteration)
-
-        return iteration.flatten().astype(np.float32)
-
-    result = _mandelbrot_numpy_numba_kernel(WIDTH, HEIGHT, MAX_ITER, x_min, x_max, y_min, y_max)
-    return result.tolist()
-
-
-def run_plain() -> list[float]:
-    x_min, x_max = -2.5, 1.0
-    y_min, y_max = -1.0, 1.0
-
-    result = []
-    for py in range(HEIGHT):
-        for px in range(WIDTH):
-            # map to complex plane
-            x0 = x_min + (px / WIDTH) * (x_max - x_min)
-            y0 = y_min + (py / HEIGHT) * (y_max - y_min)
-
-            # mandelbrot iter
+    for py in range(height):
+        for px in range(width):
+            x0 = x_min + (px / width) * (x_max - x_min)
+            y0 = y_min + (py / height) * (y_max - y_min)
             x, y = 0.0, 0.0
             iteration = 0
-            while x * x + y * y < 4.0 and iteration < MAX_ITER:
+            while x * x + y * y < 4.0 and iteration < max_iter:
                 xtemp = x * x - y * y + x0
                 y = 2.0 * x * y + y0
                 x = xtemp
                 iteration += 1
+            result[py * width + px] = float(iteration)
+    return result[0]  # dummy return to prevent DCE
 
+
+def run_numba(resources) -> float:
+    start = time.perf_counter()
+    _mandelbrot_numba_kernel(*resources)
+    end = time.perf_counter()
+    return end - start
+
+
+@njit
+def _mandelbrot_numpy_numba_kernel(width: int, height: int, max_iter: int, x_min: float, x_max: float, y_min: float, y_max: float) -> np.ndarray:
+    px = np.arange(width, dtype=np.float32)
+    py = np.arange(height, dtype=np.float32)
+
+    x0 = (x_min + (px / width) * (x_max - x_min)).reshape(1, width).astype(np.float32)
+    y0 = (y_min + (py / height) * (y_max - y_min)).reshape(height, 1).astype(np.float32)
+
+    x = np.zeros((height, width), dtype=np.float32)
+    y = np.zeros((height, width), dtype=np.float32)
+    iteration = np.zeros((height, width), dtype=np.int32)
+
+    four = np.float32(4.0)
+    two = np.float32(2.0)
+
+    for i in range(max_iter):
+        mask = x * x + y * y < four
+        xtemp = x * x - y * y + x0
+        y = np.where(mask, two * x * y + y0, y)
+        x = np.where(mask, xtemp, x)
+        iteration = np.where(mask, iteration + np.int32(1), iteration)
+
+    return iteration.flatten().astype(np.float32)
+
+
+def run_numpy_numba(resources) -> float:
+    start = time.perf_counter()
+    _mandelbrot_numpy_numba_kernel(*resources)
+    end = time.perf_counter()
+    return end - start
+
+
+def run_plain(resources) -> float:
+    width, height, max_iter, x_min, x_max, y_min, y_max = resources
+    start = time.perf_counter()
+    result = []
+    for py in range(height):
+        for px in range(width):
+            x0 = x_min + (px / width) * (x_max - x_min)
+            y0 = y_min + (py / height) * (y_max - y_min)
+            x, y = 0.0, 0.0
+            iteration = 0
+            while x * x + y * y < 4.0 and iteration < max_iter:
+                xtemp = x * x - y * y + x0
+                y = 2.0 * x * y + y0
+                x = xtemp
+                iteration += 1
             result.append(float(iteration))
-
-    return result
+    end = time.perf_counter()
+    return end - start
 
 
 #
-# benchmark
+# benchmark main
 #
 
-
-NUM_BENCHMARK_RUNS = 5
-
-
-def time_avg_gpu():
-    total_time = 0.0
-    for _ in range(NUM_BENCHMARK_RUNS):
-        _, exec_time = run_gpu()
-        total_time += exec_time
-    return total_time / NUM_BENCHMARK_RUNS * 1000
+NUM_BENCHMARK_RUNS = 20
 
 
-def time_avg():
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            total_time = 0.0
-            for _ in range(NUM_BENCHMARK_RUNS):
-                start = time.perf_counter()
-                _ = func(*args, **kwargs)
-                end = time.perf_counter()
-                total_time += (end - start) * 1000
-            return total_time / NUM_BENCHMARK_RUNS
+def get_gpu_result(resources):
+    buf = resources[2]
+    return list(memoryview(buf.contents().as_buffer(WIDTH * HEIGHT * 4)).cast("f"))
 
-        return wrapper
 
-    return decorator
+def get_numpy_result(resources):
+    width, height, max_iter, x_min, x_max, y_min, y_max = resources
+    px = np.arange(width)
+    py = np.arange(height)
+    px_grid, py_grid = np.meshgrid(px, py)
+    x0 = x_min + (px_grid / width) * (x_max - x_min)
+    y0 = y_min + (py_grid / height) * (y_max - y_min)
+    x = np.zeros_like(x0)
+    y = np.zeros_like(y0)
+    iteration = np.zeros_like(x0, dtype=np.int32)
+    for i in range(max_iter):
+        mask = x * x + y * y < 4.0
+        xtemp = x * x - y * y + x0
+        y = np.where(mask, 2.0 * x * y + y0, y)
+        x = np.where(mask, xtemp, x)
+        iteration = np.where(mask, iteration + 1, iteration)
+    return iteration.flatten().astype(np.float32).tolist()
 
 
 if __name__ == "__main__":
     print(f"mandelbrot benchmark ({WIDTH * HEIGHT:,} px, {MAX_ITER} iters)")
 
-    times = {
-        "gpu": time_avg_gpu(),
-        "numpy": time_avg()(run_numpy)(),
-        "numba": time_avg()(run_numba)(),
-        "numpy_numba": time_avg()(run_numpy_numba)(),
-        "plain": time_avg()(run_plain)(),
-    }
-    print(times)
-    max_time = max(times.values())
-    min_time = min(times.values())
+    # 1. Setup Resources
+    print("setting up resources...")
+    res_gpu = get_metal_resources()
+    res_cpu = get_numpy_resources()
 
-    # # compare GPU vs NumPy
-    # diffs_numpy = [abs(a - b) for a, b in zip(result_gpu, result_numpy)]
-    # max_diff_numpy = max(diffs_numpy)
+    # 2. Benchmarks
+    benchmarks = [
+        ("gpu", lambda: run_gpu(res_gpu)),
+        ("numpy", lambda: run_numpy(res_cpu)),
+        ("numpy+numba", lambda: run_numpy_numba(res_cpu)),
+        ("numba", lambda: run_numba(res_cpu)),
+        # plain python is too slow for 100 runs
+        # ("plain", lambda: run_plain(res_cpu)),
+    ]
 
-    # # compare GPU vs NumPy+Numba
-    # diffs_numpy_numba = [abs(a - b) for a, b in zip(result_gpu, result_numpy_numba)]
-    # max_diff_numpy_numba = max(diffs_numpy_numba)
+    results = {}
+    for name, func in benchmarks:
+        results[name] = Benchmark(name, func, num_runs=NUM_BENCHMARK_RUNS).run()
 
-    # # compare GPU vs Numba
-    # diffs_numba = [abs(a - b) for a, b in zip(result_gpu, result_numba)]
-    # max_diff_numba = max(diffs_numba)
+    print("\nresults (avg latency ms):")
+    for name, t in results.items():
+        print(f"{name:<15}: {t:.2f} ms")
 
-    # # compare GPU vs Numba List
-    # diffs_numba_list = [abs(a - b) for a, b in zip(result_gpu, result_numba_list)]
-    # max_diff_numba_list = max(diffs_numba_list)
+    base = results["gpu"]
+    print("\nspeedups (vs gpu):")
+    for name, t in results.items():
+        if name != "gpu":
+            print(f"gpu vs {name:<12}: {t/base:.2f}x")
 
-    # # compare GPU vs plain CPU
-    # diffs_cpu = [abs(a - b) for a, b in zip(result_gpu, result_cpu)]
-    # max_diff_cpu = max(diffs_cpu)
+    # 3. Correctness
+    print("\nverifying correctness...")
+    # Run once to get results
+    run_gpu(res_gpu)
+    out_gpu = np.array(get_gpu_result(res_gpu))
+    out_cpu = np.array(get_numpy_result(res_cpu))
 
-    # print(f"\nresults:")
-    # print(f"gpu time (total):     {gpu_total_time*1000:.2f} ms")
-    # print(f"gpu time (exec only): {gpu_exec_time*1000:.2f} ms")
-    # print(f"numpy time:           {numpy_time*1000:.2f} ms")
-    # print(f"numpy+numba time:     {numpy_numba_time*1000:.2f} ms")
-    # print(f"numba time:           {numba_time*1000:.2f} ms")
-    # print(f"numba list time:      {numba_list_time*1000:.2f} ms")
-    # print(f"cpu time:             {cpu_time*1000:.2f} ms")
-    # print(f"\nspeedups (vs gpu exec only):")
-    # print(f"gpu vs numpy:        {numpy_time/gpu_exec_time:.2f}x")
-    # print(f"gpu vs numpy+numba:  {numpy_numba_time/gpu_exec_time:.2f}x")
-    # print(f"gpu vs numba:        {numba_time/gpu_exec_time:.2f}x")
-    # print(f"gpu vs numba list:   {numba_list_time/gpu_exec_time:.2f}x")
-    # print(f"gpu vs cpu:          {cpu_time/gpu_exec_time:.2f}x")
-    # print(f"\nspeedups (vs cpu):")
-    # print(f"numpy vs cpu:        {cpu_time/numpy_time:.2f}x")
-    # print(f"numpy+numba vs cpu:  {cpu_time/numpy_numba_time:.2f}x")
-    # print(f"numba vs cpu:        {cpu_time/numba_time:.2f}x")
-    # print(f"numba list vs cpu:   {cpu_time/numba_list_time:.2f}x")
-    # print(f"\naccuracy:")
-    # print(f"gpu vs numpy:        max diff = {max_diff_numpy:.6f}")
-    # print(f"gpu vs numpy+numba:  max diff = {max_diff_numpy_numba:.6f}")
-    # print(f"gpu vs numba:        max diff = {max_diff_numba:.6f}")
-    # print(f"gpu vs numba list:   max diff = {max_diff_numba_list:.6f}")
-    # print(f"gpu vs cpu:          max diff = {max_diff_cpu:.6f}")
+    # Compare
+    diff = np.abs(out_gpu - out_cpu)
+    max_diff = np.max(diff)
+    print(f"max difference (gpu vs numpy): {max_diff:.6f}")
 
-    # show sample of results
-    # print("\nsample iteration counts (first 10 pixels):")
-    # print("gpu vs numpy vs numpy+numba vs numba vs cpu:")
-    # for i in range(min(10, len(result_gpu))):
-    #     print(f"  pixel {i}: gpu={int(result_gpu[i])}, numpy={int(result_numpy[i])}, numpy+numba={int(result_numpy_numba[i])}, numba={int(result_numba[i])}, cpu={int(result_cpu[i])}")
+    if max_diff < 0.1:
+        print("✅ Results match!")
+    else:
+        print("❌ Results mismatch!")

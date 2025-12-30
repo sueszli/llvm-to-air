@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
@@ -40,6 +41,7 @@ def compile_to_metallib(air_llvm_ir: str) -> bytes:
 #
 
 
+@lru_cache(None)
 def create_compute_pipeline(metallib_binary: bytes, kernel_name: str):
     # setup Metal device, library, compute pipeline state
 
@@ -47,18 +49,18 @@ def create_compute_pipeline(metallib_binary: bytes, kernel_name: str):
     device = Metal.MTLCreateSystemDefaultDevice()
     assert device, "metal not supported on this device"
 
-    # load library from bytes via temp file
-    with tempfile.NamedTemporaryFile(suffix=".metallib", delete=False) as tmp:
-        tmp.write(metallib_binary)
-        tmp_path = tmp.name
+    # load library from bytes using temp file (workaround for newLibraryWithData segfault)
+    with tempfile.NamedTemporaryFile(suffix=".metallib", delete=False) as f:
+        f.write(metallib_binary)
+        temp_path = f.name
 
     try:
-        lib_url = Foundation.NSURL.fileURLWithPath_(tmp_path)
-        library, error = device.newLibraryWithURL_error_(lib_url, None)
+        url = Foundation.NSURL.fileURLWithPath_(temp_path)
+        library, error = device.newLibraryWithURL_error_(url, None)
         assert library, f"error loading library: {error}"
     finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
 
     # get kernel function and create pipeline state
     fn = library.newFunctionWithName_(kernel_name)

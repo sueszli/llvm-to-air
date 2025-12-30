@@ -188,6 +188,7 @@ class MetadataGenerator:
             base_t_str = re.sub(r"addrspace\(\d+\)", "", arg_type.replace("*", "")).strip()
             base_name, size, align = get_type_info(base_t_str)
 
+            # TODO: hacky "magic string" dependency, fix at MLIR lowering phase
             as_id = 3 if "addrspace(3)" in arg_type else (2 if "addrspace(2)" in arg_type else 1)
 
             access_mode = '!"air.read"' if (as_id == 2 or not is_output) else '!"air.read_write"'
