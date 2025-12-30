@@ -555,8 +555,5 @@ def to_air(llvm_ir_text: str, kernel_overrides: Dict[str, Dict[str, str]] = None
         and argument 2 as a writeable buffer.
     """
     assert llvm_ir_text
-    assert sys.platform == "darwin", f"llvm-to-air is only supported on macOS (current: {sys.platform})"
-    assert platform.machine() == "arm64", f"llvm-to-air requires Apple Silicon (arm64) (current: {platform.machine()})"
-
     translator = AirTranslator(llvm_ir_text, kernel_overrides)
     return translator.translate()
