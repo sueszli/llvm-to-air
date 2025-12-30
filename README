@@ -42,7 +42,7 @@ my knowledge this is the first open source end-to-end stack for Apple Silicon.
 Performance
 --------------------------------------------------------------------------------
 
-The mandelbrot benchmark shows a 🔥1150x speedup🔥 over the vanilla Python impl.
+The mandelbrot benchmark shows a 1150x speedup 🔥 over the vanilla Python impl.
 
 $ uv run demo_mandelbrot.py
 
