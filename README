@@ -11,8 +11,8 @@ because (1) Apple Silicon market share is growing fast, (2) most of these
 machines have powerful GPUs sitting idle and (3) the world needs more compute
 for everything from protein folding to ML training.
 
-Mojo demonstrated that targeting Apple GPUs via MLIR->LLVM->AIR->MetalLib works,
-but their implementation is closed source [^2].
+Mojo proved that targeting Apple GPUs via MLIR->LLVM->AIR->MetalLib works, but
+their implementation is closed source [^2].
 
 This project reverse engineers that missing piece and provides an open source
 implementation of the LLVM IR to AIR lowering pass.
@@ -31,8 +31,8 @@ implementation of the LLVM IR to AIR lowering pass.
 The core contribution is `src/llvm_to_air.py`, which takes LLVM IR and lowers it 
 to Apple's Intermediate Representation AIR. This enables a full compilation 
 pipeline from high-level MLIR dialects down to executable code on Apple Silicon 
-GPUs. The implementation leverages xDSL to write the entire compiler stack in 
-Python, making it accessible and hackable.
+GPUs. I used xDSL to write the entire compiler stack in Python, making it accessible
+and hackable.
 
 Fair warning: this is experimental and brittle. AIR is closed source and 
 undocumented, so everything here is reverse engineered. But it works and to 
