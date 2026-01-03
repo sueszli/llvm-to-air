@@ -3,7 +3,10 @@
 ▌  ▌ ▝▞ ▌ ▌  ▐ ▖▌ ▌  ▌ ▌▐ ▌▚ 
 ▀▀▘▀▀▘▘ ▘ ▘   ▀ ▝▀   ▘ ▘▀▘▘ ▘
 
-// reverse-engineered compiler stack for Apple Silicon GPUs
+// Reverse-engineered compiler stack for Apple Silicon GPUs
+//
+// Coming soon to xDSL:
+// https://github.com/xdslproject/xdsl/blob/main/xdsl/backend/mps/__init__.py
 
 MLIR is the right abstraction for portable performance across heterogeneous
 hardware, but it has no Apple Silicon GPU backend [^1]. This is a problem
